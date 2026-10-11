@@ -58,6 +58,7 @@ header p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
 .sq.last::before { background: rgba(255, 214, 79, .55); }
 .sq.sel::before { background: rgba(80, 180, 90, .6); }
 .sq.hint::before { background: rgba(59, 142, 232, .45); animation: hintpulse 1s ease-in-out infinite; }
+.sq.target::before { box-shadow: inset 0 0 0 calc(var(--board) / 8 * .07) rgba(240, 130, 20, .9); background: rgba(255, 170, 60, .22); }
 .sq.check::before { background: radial-gradient(circle, rgba(255, 30, 30, .95) 0, rgba(230, 20, 20, .65) 35%, rgba(200, 0, 0, 0) 75%); }
 .sq img.pc { position: relative; width: 92%; height: 92%; pointer-events: none; -webkit-user-drag: none; filter: drop-shadow(0 2px 1px rgba(0,0,0,.25)); z-index: 2; }
 .sq img.pc.lift { opacity: .3; }
@@ -197,6 +198,19 @@ button, .seg button, .toggle, .btn { touch-action: manipulation; -webkit-user-se
 .prompt[hidden] { display: none; }
 .prompt .row { display: flex; gap: 6px; margin-top: 6px; }
 
+/* Hint explanations */
+.hintx { margin-top: 8px; background: #eef5ff; border: 1px solid #cfe0fb; border-radius: 12px; padding: 8px 10px; font-size: 14px; line-height: 1.35; }
+.hintx[hidden] { display: none; }
+.hintx .hx-title { font-weight: 800; color: #1f5fbf; margin-bottom: 2px; }
+.hintx .hx-title.small { font-size: 13.5px; color: #8a4b00; }
+.hintx ul { margin: 2px 0 4px; padding-left: 18px; }
+.hintx li { margin: 2px 0; }
+.hintx .hx-eval, .hintx .hx-plan { margin-top: 3px; font-size: 13.5px; }
+.hintx .hx-plan { color: #2b3b55; }
+.hintx .hx-whynot { margin-top: 6px; background: #fff4e0; border-radius: 10px; padding: 6px 8px; }
+.hintx .btn.small { margin-top: 6px; font-size: 13.5px; padding: 8px 10px; min-height: 40px; width: 100%; }
+@media (max-width: 520px) { .hintx { font-size: 13.5px; } .hintx .hx-eval, .hintx .hx-plan { font-size: 13px; } }
+
 </style>
 </head>
 <body>
@@ -238,6 +252,7 @@ button, .seg button, .toggle, .btn { touch-action: manipulation; -webkit-user-se
     <div class="card">
       <div class="status" id="status">White to move</div>
       <div class="substatus" id="substatus"></div>
+      <div class="hintx" id="hintExplain" hidden></div>
       <div class="prompt" id="prompt" hidden></div>
     </div>
     <div class="card coach" id="coachCard">
@@ -305,6 +320,7 @@ button, .seg button, .toggle, .btn { touch-action: manipulation; -webkit-user-se
       </div>
       <div class="label">Helpers</div>
       <div class="toggles">
+        <label class="toggle"><span>💡 Explain my hints</span><input type="checkbox" id="optExplain"><span class="sw"></span></label>
         <label class="toggle"><span>Show legal moves</span><input type="checkbox" id="optLegal"><span class="sw"></span></label>
         <label class="toggle" id="flipToggle"><span>Auto-flip board each turn</span><input type="checkbox" id="optFlip"><span class="sw"></span></label>
         <label class="toggle"><span>Sounds</span><input type="checkbox" id="optSound"><span class="sw"></span></label>
@@ -749,6 +765,7 @@ var ChessEngine = (function () {
     var start = Date.now(), deadline = start + timeMs, nodes = 0, stop = false;
     ttInit();
     var k1 = new Int32Array(MAXPLY + 8), k2 = new Int32Array(MAXPLY + 8), hist = new Int32Array(120 * 120);
+    var PVW = MAXPLY + 8, pvArr = new Int32Array(PVW * PVW), pvLen = new Int32Array(PVW);   // triangular principal-variation table
     var b = pos.b;
 
     function mvv(m) {
@@ -781,6 +798,7 @@ var ChessEngine = (function () {
     function negamax(depth, alpha, beta, ply) {
       if ((++nodes & 1023) === 0 && Date.now() > deadline) stop = true;
       if (stop) return 0;
+      pvLen[ply] = 0;
       if (ply > 0 && (pos.half >= 100 || pos.isRep() || pos.insufficient())) return 0;
       var us = pos.side, inChk = pos.attacked(us === 1 ? pos.kw : pos.kb, -us);
       if (inChk && ply < MAXPLY) depth++;
@@ -828,6 +846,9 @@ var ChessEngine = (function () {
           best = v; bestM = m;
           if (v > alpha) {
             alpha = v;
+            pvArr[ply * PVW] = m;
+            for (var pk = 0; pk < pvLen[ply + 1] && pk < PVW - 2; pk++) pvArr[ply * PVW + 1 + pk] = pvArr[(ply + 1) * PVW + pk];
+            pvLen[ply] = 1 + Math.min(pvLen[ply + 1], PVW - 2);
             if (v >= beta) {
               if (quiet) {
                 if (k1[ply] !== m) { k2[ply] = k1[ply]; k1[ply] = m; }
@@ -851,7 +872,7 @@ var ChessEngine = (function () {
     for (var si = root.length - 1; si > 0; si--) { var rj = (Math.random() * (si + 1)) | 0, tmp = root[si]; root[si] = root[rj]; root[rj] = tmp; }
     var bestMove = root[0], bestScore = 0, done = 0, us = pos.side;
     if (root.length === 1 && !opts.forceSearch) return { move: root[0], score: 0, depth: 0, nodes: 0, ms: 0 };
-    var lastScores = null;
+    var lastScores = null, bestPv = [root[0]];
     for (var d = 1; d <= maxDepth && d < MAXPLY; d++) {
       if (noise) {
         // Exact score for every root move, then choose with some randomness (weaker, more human play).
@@ -878,7 +899,11 @@ var ChessEngine = (function () {
           }
           pos.unmake();
           if (stop) break;
-          if (v2 > alpha) { alpha = v2; iterBest = m; iterScore = v2; }
+          if (v2 > alpha) {
+            alpha = v2; iterBest = m; iterScore = v2;
+            var line = [m]; for (var pq = 0; pq < pvLen[1]; pq++) line.push(pvArr[PVW + pq]);
+            bestPv = line;
+          }
         }
         if (iterBest) {
           bestMove = iterBest; bestScore = iterScore;
@@ -898,7 +923,29 @@ var ChessEngine = (function () {
       }
       bestMove = root[bi2]; bestScore = lastScores[bi2];
     }
-    return { move: bestMove, score: bestScore, depth: done, nodes: nodes, ms: Date.now() - start };
+    if (bestPv[0] !== bestMove) bestPv = [bestMove];
+    return { move: bestMove, score: bestScore, depth: done, nodes: nodes, ms: Date.now() - start, pv: bestPv };
+  }
+
+  // Principal variation after `first`, read back from the transposition table of the last search.
+  function pv(pos, first, maxLen) {
+    var line = [], made = 0, seen = {}, pre = Array.isArray(first) ? first : [first];
+    maxLen = maxLen || 8;
+    for (var pi = 0; pi < pre.length && line.length < maxLen; pi++) {
+      if (!pre[pi] || pos.legalMoves().indexOf(pre[pi]) < 0) break;
+      line.push(pre[pi]); pos.make(pre[pi]); made++;
+    }
+    if (!line.length) return line;
+    while (ttKey && line.length < maxLen) {
+      var idx = pos.h1 & TT_MASK;
+      if (!ttFlag[idx] || ttKey[idx] !== pos.h2) break;
+      var m = ttMove[idx];
+      if (!m || pos.legalMoves().indexOf(m) < 0) break;
+      var key = pos.h1 + ':' + pos.h2; if (seen[key]) break; seen[key] = 1;
+      line.push(m); pos.make(m); made++;
+    }
+    while (made--) pos.unmake();
+    return line;
   }
 
   var LEVELS = {
@@ -916,7 +963,7 @@ var ChessEngine = (function () {
   }
 
   return {
-    Position: Position, search: search, think: think, LEVELS: LEVELS, START: START,
+    Position: Position, search: search, pv: pv, think: think, LEVELS: LEVELS, START: START,
     sqName: sqName, parseSq: parseSq, fileOf: fileOf, rankOf: rankOf, uci: uci,
     fromOf: fromOf, toOf: toOf, promoOf: promoOf, flagsOf: flagsOf,
     P: P, N: N, B: B, R: R, Q: Q, K: K, OFF: OFF, VAL: VAL, SQ120: SQ120, LETTERS: LETTERS,
@@ -1270,6 +1317,315 @@ if (typeof module !== 'undefined' && module.exports) module.exports = ChessEngin
   };
 })(ChessEngine);
 
+/* Family Chess: "Why this move" explanations for hints, plus "Why not my move?".
+   Everything is computed locally from the engine line and the board. Extends ChessEngine.coach. */
+(function (E) {
+  'use strict';
+  var C = E.coach, P = E.P, N = E.N, B = E.B, R = E.R, Q = E.Q, K = E.K, MATE = E.MATE, sqn = E.sqName;
+  var NAMES = C.NAMES, PTS = [0, 1, 3, 3, 5, 9, 0];
+  var B_OFF = [-11, -9, 9, 11], R_OFF = [-10, -1, 1, 10];
+  var CENTER = ['d4', 'e4', 'd5', 'e5'].map(E.parseSq);
+  var HOME = { 1: { 92: N, 97: N, 93: B, 96: B }, '-1': { 22: N, 27: N, 23: B, 26: B } };
+  function cap1(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+  function list(a) { return a.length <= 1 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
+  function isMateScore(cp) { return Math.abs(cp) > MATE - 1000; }
+  function material(pos, side) {
+    var m = 0;
+    for (var i = 0; i < 64; i++) { var p = pos.b[E.SQ120[i]]; if (p) m += (p > 0 ? 1 : -1) * PTS[Math.abs(p)]; }
+    return m * side;
+  }
+  // Material for `side` once obvious free captures for the side to move are counted (TT lines can stop mid-trade).
+  function settledMaterial(pos, side) {
+    var m = material(pos, side), st = pos.legalMoves();
+    if (!st.length) return m;
+    var h = C.hanging(pos, -pos.side);
+    if (h.length) m += (pos.side === side ? 1 : -1) * Math.round(h[0].gain / 100);
+    return m;
+  }
+  function worth(n) {
+    n = Math.abs(n);
+    if (n <= 1) return 'a pawn';
+    if (n === 2) return 'two pawns';
+    if (n === 3) return 'a knight';
+    if (n === 4) return 'a knight and a pawn';
+    if (n === 5) return 'a rook';
+    if (n <= 7) return 'a rook and a pawn or two';
+    if (n === 8) return 'a rook and a knight';
+    return 'a queen';
+  }
+  // Engine score (centipawns, from the mover's side) in plain words.
+  function evalPhrase(cp) {
+    if (isMateScore(cp)) { var n = Math.ceil((MATE - Math.abs(cp)) / 2); return cp > 0 ? (n <= 1 ? 'checkmate' : 'a forced checkmate in ' + n) : 'getting checkmated'; }
+    var a = Math.abs(cp), up = cp > 0 ? 'up' : 'down';
+    if (a < 50) return 'about even';
+    if (a < 120) return cp > 0 ? 'a little better' : 'a little worse';
+    if (a < 160) return up + ' about a pawn';
+    if (a < 260) return up + ' about two pawns';
+    if (a < 450) return up + ' about a knight';
+    if (a < 700) return up + ' about a rook';
+    if (a < 1100) return up + ' about a queen';
+    return cp > 0 ? 'winning big' : 'losing badly';
+  }
+  function evalLine(beforeCp, afterCp) {
+    var a = evalPhrase(beforeCp), b = evalPhrase(afterCp);
+    if (a === b) return 'You stay ' + a + '.';
+    return 'You go from ' + a + ' to ' + b + '.';
+  }
+  // Plain-English move, e.g. "knight takes the bishop on f6 with check". pos = position before the move.
+  function sayMove(pos, m) {
+    var fl = E.flagsOf(m), from = E.fromOf(m), to = E.toOf(m), a = Math.abs(pos.b[from]), pr = E.promoOf(m), s;
+    if (fl & E.F_CASTLE) s = 'castle ' + (E.fileOf(to) === 6 ? 'kingside' : 'queenside');
+    else {
+      var capd = (fl & E.F_EP) ? P : Math.abs(pos.b[to]);
+      s = NAMES[a] + (capd ? ' takes the ' + NAMES[capd] + ' on ' + sqn(to) + ((fl & E.F_EP) ? ' (en passant)' : '') : ' to ' + sqn(to));
+      if (pr) s += ' and becomes a ' + NAMES[pr];
+    }
+    pos.make(m); var chk = pos.inCheck(), mate = chk && pos.legalMoves().length === 0; pos.unmake();
+    return s + (mate ? ' — checkmate' : chk ? ' with check' : '');
+  }
+  function planLine(pos, line, maxPlies) {
+    var out = [], made = 0;
+    for (var i = 0; i < line.length && i < (maxPlies || 3); i++) {
+      var san = pos.san(line[i]), t = sayMove(pos, line[i]) + ' (' + san + ')';
+      out.push(i === 0 ? cap1(t) : i % 2 ? 'they reply ' + t : 'then ' + t);
+      pos.make(line[i]); made++;
+      if (!pos.legalMoves().length) break;
+    }
+    while (made--) pos.unmake();
+    return out.join(' → ');
+  }
+  function nullPos(pos) {
+    if (pos.inCheck()) return null;
+    var f = pos.fen().split(' ');
+    f[1] = f[1] === 'w' ? 'b' : 'w'; f[3] = '-';
+    try { var np = new E.Position(f.join(' ')); return np.inCheck() ? null : np; } catch (e) { return null; }
+  }
+  // Pins / skewers created by the slider that just moved to `to` (pos = after the move).
+  function lineTactics(pos, to, us) {
+    var b = pos.b, a = Math.abs(b[to]), out = [];
+    if (a !== B && a !== R && a !== Q) return out;
+    var dirs = a === B ? B_OFF : a === R ? R_OFF : B_OFF.concat(R_OFF);
+    dirs.forEach(function (d) {
+      var t = to + d; while (b[t] === 0) t += d;
+      if (b[t] === E.OFF || !b[t] || b[t] * us > 0) return;
+      var x = t, t2 = t + d; while (b[t2] === 0) t2 += d;
+      if (b[t2] === E.OFF || !b[t2] || b[t2] * us > 0) return;
+      var y = t2, X = Math.abs(b[x]), Y = Math.abs(b[y]);
+      var yFree = C.attackers(pos, y, -us).length === 0, xFree = C.attackers(pos, x, -us).length === 0;
+      if (X === K) {
+        if (Y >= N && (yFree || PTS[Y] > PTS[a])) out.push({ kind: 'skewer', front: x, back: y });
+      } else if (Y === K) out.push({ kind: 'pin', front: x, back: y, absolute: true });
+      else if (PTS[Y] > PTS[X] && (PTS[Y] > PTS[a] || yFree)) out.push({ kind: 'pin', front: x, back: y });
+      else if (PTS[X] > PTS[Y] && PTS[X] >= 5 && Y >= N && (PTS[X] > PTS[a] || xFree) && (yFree || PTS[Y] > PTS[a])) out.push({ kind: 'skewer', front: x, back: y });
+    });
+    return out;
+  }
+  function enemyTargets(pos, s, us) {
+    var o = {}; C.attacksFrom(pos, s).forEach(function (t) { if (pos.b[t] && pos.b[t] * us < 0) o[t] = 1; }); return o;
+  }
+
+  // Explain `move` for the side to move in `pos`. info: {score, pv} from the hint search (else a short search runs).
+  function explainMove(pos, move, info) {
+    info = info || {};
+    var us = pos.side, them = -us, legal = pos.legalMoves();
+    if (legal.indexOf(move) < 0) return null;
+    var from = E.fromOf(move), to = E.toOf(move), fl = E.flagsOf(move), moved = Math.abs(pos.b[from]);
+    var capd = (fl & E.F_EP) ? P : Math.abs(pos.b[to]), san = pos.san(move, legal);
+    var inCheck = pos.inCheck(), matNow = material(pos, us), fullBefore = pos.full;
+    var hangUs = C.hanging(pos, us), guardsOfTo = capd ? C.attackers(pos, to, them).length : 0;
+    var centerBefore = CENTER.filter(function (s) { return C.attacksFrom(pos, from).indexOf(s) >= 0; }).length;
+    var pinsBefore = (moved === B || moved === R || moved === Q) ? lineTactics(pos, from, us).map(function (t) { return t.front + ':' + t.back; }) : [];
+    var passedBefore = C.passedPawns(pos, us).map(function (p) { return p.sq; });
+    // our other sliders and what they attack before the move (for discovered attacks)
+    var sliders = [];
+    for (var i = 0; i < 64; i++) {
+      var s = E.SQ120[i], p = pos.b[s] * us;
+      if (s !== from && (p === B || p === R || p === Q)) sliders.push({ sq: s, a: p, before: enemyTargets(pos, s, us) });
+    }
+    // their threats if it were their move (null move): mate in one, or a winning idea
+    var np = nullPos(pos), threatMate = np ? C.mateInOne(np) : 0, threatMateSan = threatMate ? np.san(threatMate) : '';
+    var threatIdea = null;
+    if (np && !threatMate && info.threats !== false) {
+      var tr = E.search(np, { depth: 64, time: info.threatTime || 250, forceSearch: true });
+      if (tr.move) {
+        var tline = E.pv(np, tr.pv || tr.move, 4), mk = 0, m0 = material(np, them);
+        tline.forEach(function (m) { np.make(m); mk++; });
+        var tgain = settledMaterial(np, them) - m0;
+        while (mk--) np.unmake();
+        threatIdea = { move: tr.move, san: np.san(tr.move), say: sayMove(np, tr.move), gain: tgain, evalPass: -tr.score, firstCap: Math.abs(np.b[E.toOf(tr.move)]), to: E.toOf(tr.move) };
+      }
+    }
+    // engine line
+    var score = info.score, line = info.pv;
+    pos.make(move);
+    var after = { chk: pos.inCheck(), legal: pos.legalMoves() };
+    if (score === undefined || !line) {
+      if (!after.legal.length) { score = after.chk ? MATE - 1 : 0; line = [move]; }
+      else {
+        var r = E.search(pos, { depth: 64, time: info.time || 500, forceSearch: true });
+        score = -r.score; line = [move].concat(E.pv(pos, r.pv || r.move, 7));
+      }
+    }
+    var mated = after.chk && !after.legal.length;
+    var forks = C.forkTargets(pos, to), safeTo = C.see(pos, to, them) <= 0;
+    var lines = lineTactics(pos, to, us).filter(function (t) { return pinsBefore.indexOf(t.front + ':' + t.back) < 0; });
+    var disc = [];
+    sliders.forEach(function (sl) {
+      if (pos.b[sl.sq] * us <= 0) return;
+      var now = enemyTargets(pos, sl.sq, us);
+      Object.keys(now).forEach(function (k) {
+        var t = +k; if (sl.before[t]) return;
+        var T = Math.abs(pos.b[t]);
+        if (T === K || (T >= N && (PTS[T] > PTS[sl.a] || C.attackers(pos, t, them).length === 0))) disc.push({ sq: t, by: sl.sq, a: sl.a, T: T });
+      });
+    });
+    var hangAfter = C.hanging(pos, us), theirMateNow = mated ? 0 : C.mateInOne(pos);
+    var np2 = (!after.chk && !mated) ? nullPos(pos) : null, myMate = np2 ? C.mateInOne(np2) : 0, myMateSan = myMate ? np2.san(myMate) : '';
+    var passedAfter = moved === P && C.passedPawns(pos, us).some(function (p) { return p.sq === to; });
+    var centerAfter = CENTER.filter(function (s) { return C.attacksFrom(pos, to).indexOf(s) >= 0; });
+    var file = E.fileOf(to), ownPawnsOnFile = 0, theirPawnsOnFile = 0;
+    for (var rr = 1; rr <= 8; rr++) {
+      var q = pos.b[21 + file + (8 - rr) * 10];
+      if (q === P * us) ownPawnsOnFile++; else if (q === -P * us) theirPawnsOnFile++;
+    }
+    var endgame = C.isEndgame(pos);
+    pos.unmake();
+    // material over the engine line
+    var made = 0;
+    for (var j = 0; j < line.length && j < 6; j++) { pos.make(line[j]); made++; if (!pos.legalMoves().length) break; }
+    var matEnd = settledMaterial(pos, us);
+    while (made--) pos.unmake();
+    var net = matEnd - matNow;
+    // never claim more material than the engine's own score supports (e.g. a knight that grabs a rook but gets trapped)
+    if (!isMateScore(score) && net > 0) net = Math.max(0, Math.min(net, Math.round((score - matNow * 100) / 100)));
+    var engineAgrees = isMateScore(score) ? score > 0 : score >= matNow * 100 + 60;
+
+    var S = [], motifs = [], targets = [];
+    function add(pri, motif, text, sqs) { S.push({ pri: pri, text: text }); if (motifs.indexOf(motif) < 0) motifs.push(motif); (sqs || []).forEach(function (q2) { if (targets.indexOf(q2) < 0) targets.push(q2); }); }
+    var kingSq = pos.king(them);
+    if (mated) add(100, 'mate', 'Checkmate! Their king is attacked and has no safe square, so you win.', [kingSq]);
+    else if (isMateScore(score) && score > 0) add(98, 'mateInN', 'This starts a forced checkmate in ' + Math.ceil((MATE - score) / 2) + ' moves — follow the plan below.', [kingSq]);
+    if (inCheck) {
+      var how = moved === K ? 'moves your king to a safe square' : (capd && C.attackers(pos, pos.king(us), them).indexOf(to) >= 0) ? 'captures the piece that is giving check' : 'blocks the check';
+      add(97, 'escapeCheck', "You're in check, and this " + how + '.');
+    }
+    var freeTake = capd && guardsOfTo === 0 && safeTo;
+    if (capd && !mated) {
+      if (freeTake) add(90, 'hanging', 'Their ' + NAMES[capd] + ' on ' + sqn(to) + ' was hanging — nothing guarded it — so you take it for free (+' + PTS[capd] + ').', [to]);
+      else if (PTS[capd] > PTS[moved] && net >= 1) add(88, 'winMaterial', 'Your ' + NAMES[moved] + ' (worth ' + PTS[moved] + ') takes their ' + NAMES[capd] + ' (worth ' + PTS[capd] + ') — a good trade even if they take back.', [to]);
+      else if (net === 0 && PTS[capd] === PTS[moved] && matNow >= 2) add(55, 'tradeAhead', "You're ahead, so trading " + NAMES[moved] + ' for ' + NAMES[capd] + ' is good: with fewer pieces left, your extra material counts more.', [to]);
+      else if (net === 0 && moved !== P) add(30, 'trade', 'This is an even trade: your ' + NAMES[moved] + ' for their ' + NAMES[capd] + '.', [to]);
+    }
+    if (net < 0 && engineAgrees && !inCheck) add(86, 'sacrifice', "It's a sacrifice: you give up " + worth(net) + ', but ' + (isMateScore(score) ? 'it leads to checkmate.' : 'the engine says your attack is worth more.'));
+    if (forks.length >= 2 && !mated && (safeTo || net > 0)) {
+      add(92, 'fork', 'Fork! Your ' + NAMES[moved] + ' attacks their ' + list(forks.map(function (t) { return NAMES[Math.abs(pos.b[t])] + ' on ' + sqn(t); })) + " at the same time — they can't save both.", forks);
+    }
+    if (safeTo && !mated) lines.forEach(function (t) {
+      var fN = NAMES[Math.abs(pos.b[t.front])], bN = NAMES[Math.abs(pos.b[t.back])];
+      if (t.kind === 'pin') add(t.absolute ? 84 : 80, 'pin', 'Pin! Your ' + NAMES[moved] + ' pins their ' + fN + ' on ' + sqn(t.front) + ' to the ' + bN + (t.absolute ? " — it isn't allowed to move." : ' behind it — if it moves, you can take the ' + bN + '.'), [t.front, t.back]);
+      else add(87, 'skewer', 'Skewer! Your ' + NAMES[moved] + ' attacks their ' + fN + ', and when it moves out of the way you can take the ' + bN + ' on ' + sqn(t.back) + '.', [t.front, t.back]);
+    });
+    disc.forEach(function (d) {
+      if (mated) return;
+      if (d.T === K) add(91, 'discoveredCheck', 'Discovered check! Moving your ' + NAMES[moved] + ' uncovers your ' + NAMES[d.a] + ' on ' + sqn(d.by) + ', which now checks their king.', [d.sq]);
+      else add(85, 'discoveredAttack', 'Discovered attack! Moving your ' + NAMES[moved] + ' opens a line, so your ' + NAMES[d.a] + ' on ' + sqn(d.by) + ' now attacks their ' + NAMES[d.T] + ' on ' + sqn(d.sq) + '.', [d.sq]);
+    });
+    var tacticSaid = motifs.some(function (m) { return ['hanging', 'winMaterial', 'fork', 'pin', 'skewer', 'discoveredAttack', 'discoveredCheck'].indexOf(m) >= 0; });
+    if (net >= 1 && engineAgrees && !mated && !(freeTake && net <= PTS[capd]) && !(E.promoOf(move) && net <= PTS[E.promoOf(move)]))
+      add(tacticSaid ? 60 : 83, 'winMaterial', 'Following the plan below wins material worth about ' + worth(net) + ' (+' + net + ').');
+    if (E.promoOf(move)) add(89, 'promotion', 'Your pawn reaches the last row and becomes a ' + NAMES[E.promoOf(move)] + '!', [to]);
+    // threats against us: escaping, defending, blocking, or capturing the attacker
+    if (hangUs.length && !inCheck) {
+      for (var h = 0; h < hangUs.length; h++) {
+        var hu = hangUs[h], nm = NAMES[hu.piece], atk = NAMES[Math.abs(pos.b[hu.by])];
+        if (hu.sq === from) {
+          if (!hangAfter.some(function (x) { return x.sq === to; }) && net >= 0) { add(82, 'escape', 'It moves your ' + nm + ' out of danger — their ' + atk + ' on ' + sqn(hu.by) + ' was attacking it.', [hu.by]); break; }
+          continue;
+        }
+        if (hangAfter.some(function (x) { return x.sq === hu.sq; }) || net < 0) continue;
+        if (to === hu.by) add(81, 'removeAttacker', 'It gets rid of the ' + atk + ' that was attacking your ' + nm + ' on ' + sqn(hu.sq) + '.', [hu.sq]);
+        else {
+          pos.make(move); var guards = C.attackers(pos, hu.sq, us).indexOf(to) >= 0; pos.unmake();
+          add(78, guards ? 'defend' : 'block', (guards ? 'It protects your ' : 'It blocks the attack on your ') + nm + ' on ' + sqn(hu.sq) + ', which was under attack.', [hu.sq]);
+        }
+        break;
+      }
+    }
+    if (threatMate && !theirMateNow && !mated && !(isMateScore(score) && score < 0)) add(88, 'stopMate', 'It stops their threat of checkmate with ' + threatMateSan + '.', [E.toOf(threatMate)]);
+    else if (threatIdea && !mated && threatIdea.gain >= 2 && net <= 0 && score - threatIdea.evalPass >= threatIdea.gain * 60 &&
+      !motifs.some(function (m) { return ['escape', 'defend', 'block', 'removeAttacker'].indexOf(m) >= 0; }))
+      add(77, 'stopThreat', 'It stops their idea ' + threatIdea.san + ' (' + threatIdea.say + '), which would have won about ' + worth(threatIdea.gain) + '.', [threatIdea.to]);
+    if (myMate && !isMateScore(score)) add(79, 'mateThreat', 'It threatens checkmate next move with ' + myMateSan + ' — they have to defend.', [kingSq]);
+    else if (myMate && isMateScore(score) && score > 0 && !mated && !motifs.length) add(79, 'mateThreat', 'It threatens checkmate with ' + myMateSan + '.', [kingSq]);
+    if (after.chk && !mated && motifs.indexOf('discoveredCheck') < 0 && !(forks.length && forks.indexOf(kingSq) >= 0) && motifs.indexOf('skewer') < 0)
+      add(40, 'check', 'It gives check, so they must deal with their king first.', [kingSq]);
+    // positional ideas
+    if (fl & E.F_CASTLE) add(70, 'castle', 'Castling tucks your king behind its pawns and brings a rook toward the middle.');
+    if ((moved === N || moved === B) && HOME[us][from] && fullBefore <= 15 && !capd)
+      add(65, 'develop', 'It develops your ' + NAMES[moved] + ' off the back row' + (centerAfter.length >= 1 ? ', aiming at the center (' + centerAfter.map(sqn).join(', ') + ')' : '') + '.');
+    else if (moved === P && CENTER.indexOf(to) >= 0 && fullBefore <= 15) add(64, 'center', 'It puts a pawn in the center (' + sqn(to) + '), which gives your pieces room and controls key squares.');
+    else if (centerAfter.length >= 2 && centerAfter.length > centerBefore && moved !== K && moved !== Q && !E.promoOf(move)) add(45, 'center', 'Your ' + NAMES[moved] + ' now controls the center squares ' + list(centerAfter.map(sqn)) + '.');
+    if (moved === R && !ownPawnsOnFile && E.fileOf(from) !== file) add(58, 'openFile', 'Your rook moves to the ' + (theirPawnsOnFile ? 'half-open' : 'open') + ' ' + 'abcdefgh'[file] + '-file, where nothing of yours blocks it.');
+    if (passedAfter) add(passedBefore.indexOf(from) >= 0 ? 62 : 60, 'passedPawn', passedBefore.indexOf(from) >= 0 ? 'It pushes your passed pawn — no enemy pawn can stop it on its way to becoming a queen.' : 'It creates a passed pawn — no enemy pawn can stop it now.', [to]);
+    if (moved === K && endgame && !inCheck && !(fl & E.F_CASTLE)) {
+      var cd = function (s2) { var f2 = E.fileOf(s2), r2 = E.rankOf(s2) - 1; return Math.max(3 - f2, f2 - 4) + Math.max(3 - r2, r2 - 4); };
+      if (cd(to) < cd(from)) add(50, 'kingActive', 'In the endgame the king is a strong piece — this brings it toward the middle.');
+    }
+    if (!S.length) {
+      pos.make(move); var mob = C.attacksFrom(pos, to).length; pos.unmake();
+      var mob0 = C.attacksFrom(pos, from).length;
+      add(10, 'quiet', mob > mob0 && moved !== P && moved !== K ? 'No big tactic here — it quietly makes your ' + NAMES[moved] + ' more active (it now reaches ' + mob + ' squares instead of ' + mob0 + ').'
+        : 'No big tactic here — it is a quiet move that keeps your position safe and solid.');
+    }
+    S.sort(function (a, b2) { return b2.pri - a.pri; });
+    return {
+      move: move, san: san, motifs: motifs, targets: targets,
+      sentences: S.slice(0, 3).map(function (x) { return x.text; }),
+      evalText: mated ? 'You go from ' + evalPhrase(matNow * 100) + ' to checkmate!' : evalLine(matNow * 100, score),
+      plan: planLine(pos, line, isMateScore(score) && score > 0 ? Math.min(line.length, 5) : 3),
+      score: score, net: net, pvSan: (function () { var o = [], mk2 = 0; line.forEach(function (m) { o.push(pos.san(m)); pos.make(m); mk2++; }); while (mk2--) pos.unmake(); return o; })()
+    };
+  }
+
+  // Hint with explanation: engine's hint move + why.
+  function hintExplain(pos, opts) {
+    opts = opts || {};
+    var r = E.think(pos, opts.level || 'hint');
+    if (!r.move) return r;
+    var line = E.pv(pos, r.pv || r.move, 8);
+    r.ex = explainMove(pos, r.move, { score: r.score, pv: line });
+    return r;
+  }
+
+  // "Why not my move?" pos = position BEFORE the player's move.
+  function whyNot(pos, move, opts) {
+    opts = opts || {};
+    var us = pos.side, rv = opts.review || C.review(pos, move, { time: opts.time || 500 });
+    var w = function (sc) { return us === 1 ? sc : -sc; };
+    var v = C.VERDICTS[rv.verdict], out = { verdict: rv.verdict, san: rv.playedSan, lines: [] };
+    if (rv.verdict === 'best' || rv.verdict === 'good') {
+      out.lines.push(rv.playedSan + (rv.verdict === 'best' ? ' was the best move ' : ' was a good move ') + v.emoji + ' — nothing to fix there.');
+      return out;
+    }
+    var art = rv.verdict === 'inaccuracy' ? 'an ' : 'a ';
+    out.lines.push(rv.playedSan + ' was ' + art + v.label.toLowerCase() + ' ' + v.emoji + '. ' + evalLine(w(rv.evalBest), w(rv.evalAfter)).replace(/^You go from (.*) to (.*)\.$/, 'It took you from $1 to $2.').replace(/^You stay/, 'You stayed'));
+    var reasons = rv.reasons.filter(function (t) { return !/^Opening tip/.test(t); }).slice(0, 2);
+    reasons.forEach(function (t) { out.lines.push(t); });
+    if (rv.reply && !reasons.some(function (t) { return t.indexOf(rv.replySan) >= 0; })) {
+      pos.make(move); out.lines.push('It allowed ' + rv.replySan + ' (' + sayMove(pos, rv.reply) + ').'); pos.unmake();
+    }
+    if (rv.best && rv.best !== move) {
+      var ex = explainMove(pos, rv.best, { time: 400, threatTime: 150 });
+      if (ex) out.lines.push('Better was ' + rv.bestSan + ' — ' + ex.sentences[0].charAt(0).toLowerCase() + ex.sentences[0].slice(1));
+      out.best = rv.best;
+    }
+    return out;
+  }
+
+  C.explainMove = explainMove; C.hintExplain = hintExplain; C.whyNot = whyNot;
+  C.evalPhrase = evalPhrase; C.sayMove = sayMove;
+})(ChessEngine);
+
 </script>
 <script>
 var FC_PWA = true;
@@ -1290,7 +1646,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
   var S = {
     mode: 'computer', human: 1, level: 'easy',
     showLegal: true, autoFlip: false, sound: true,
-    coach: true, coachWho: 'me', evalBar: true,
+    coach: true, coachWho: 'me', evalBar: true, explain: true,
     flipped: false,
     pos: new E.Position(),
     history: [],          // {m, san, cap, review, pending}
@@ -1327,6 +1683,8 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
   var GLUE = '\nself.onmessage=function(e){var d=e.data,r;var p=new ChessEngine.Position(ChessEngine.START);' +
     'for(var i=0;i<d.moves.length;i++)p.make(d.moves[i]);' +
     'if(d.kind==="review")r=ChessEngine.coach.review(p,d.move,{time:d.time});' +
+    'else if(d.kind==="hintx")r=ChessEngine.coach.hintExplain(p);' +
+    'else if(d.kind==="whynot")r=ChessEngine.coach.whyNot(p,d.move,{review:d.review});' +
     'else if(d.kind==="eval")r={score:ChessEngine.coach.evalWhite(p,d.time)};' +
     'else r=ChessEngine.think(p,d.level);r.id=d.id;self.postMessage(r);};';
   function runJob(d) {
@@ -1334,6 +1692,8 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     d.moves.forEach(function (m) { p.make(m); });
     var r;
     if (d.kind === 'review') r = CO.review(p, d.move, { time: d.time });
+    else if (d.kind === 'hintx') r = CO.hintExplain(p);
+    else if (d.kind === 'whynot') r = CO.whyNot(p, d.move, { review: d.review });
     else if (d.kind === 'eval') r = { score: CO.evalWhite(p, d.time) };
     else r = E.think(p, d.level);
     r.id = d.id; return r;
@@ -1510,17 +1870,49 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     afterUndo();
   }
 
+  // Hints (and their explanations) are computed on this device only and never sent to an online opponent.
   function hint() {
     if (!canInteract() || S.hinting) return;
     S.hinting = true; S.hint = null; render();
-    askAI('hint', 'hint', function (d) {
+    var n = S.history.length;
+    var done = function (d) {
       S.hinting = false;
+      if (S.history.length !== n) { render(); return; }
       if (d.move && S.legal.indexOf(d.move) >= 0) {
-        S.hint = { from: E.fromOf(d.move), to: E.toOf(d.move), m: d.move };
+        S.hint = { from: E.fromOf(d.move), to: E.toOf(d.move), m: d.move, ex: S.explain ? d.ex || null : null, why: null, whyBusy: false };
         S.selected = E.fromOf(d.move);
       }
       render();
+    };
+    if (S.explain) ai.post({ kind: 'hintx', moves: movesUpTo(n) }, done);
+    else askAI('hint', 'hint', done);
+  }
+  function myLastMoveIdx() { var i = S.history.length - 2; return i >= 0 ? i : -1; }
+  function whyNotMine() {
+    var h = S.hint, idx = myLastMoveIdx();
+    if (!h || h.whyBusy || idx < 0) return;
+    h.whyBusy = true; render();
+    var rec = S.history[idx], n = S.history.length;
+    ai.post({ kind: 'whynot', moves: movesUpTo(idx), move: rec.m, review: rec.review || null }, function (r) {
+      if (S.hint !== h || S.history.length !== n) return;
+      h.whyBusy = false; h.why = r; render();
     });
+  }
+  function renderHintExplain() {
+    var box = $('hintExplain'), h = S.hint;
+    if (!h || !h.ex || !S.explain) { box.hidden = true; box.innerHTML = ''; return; }
+    var ex = h.ex, idx = myLastMoveIdx();
+    var html = '<div class="hx-title">🧠 Why ' + esc(ex.san) + '?</div><ul class="hx-why">' +
+      ex.sentences.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' +
+      '<div class="hx-eval">📊 ' + esc(ex.evalText) + '</div>' +
+      (ex.plan ? '<div class="hx-plan">🗺️ <b>Plan:</b> ' + esc(ex.plan) + '</div>' : '');
+    if (idx >= 0) {
+      if (h.why) html += '<div class="hx-whynot"><div class="hx-title small">🤔 Your last move, ' + esc(h.why.san) + '</div><ul>' +
+        h.why.lines.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>';
+      else html += '<button class="btn small" id="btnWhyNot"' + (h.whyBusy ? ' disabled' : '') + '>' + (h.whyBusy ? '🤔 Looking at your last move…' : '🤔 Why not my move (' + esc(S.history[idx].san) + ')?') + '</button>';
+    }
+    box.innerHTML = html; box.hidden = false;
+    var b = $('btnWhyNot'); if (b) b.onclick = whyNotMine;
   }
 
   // ---------- Coach ----------
@@ -1765,6 +2157,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
       if (last && (s === E.fromOf(last) || s === E.toOf(last))) cls += ' last';
       if (s === S.selected) cls += ' sel';
       if (S.hint && (s === S.hint.from || s === S.hint.to)) cls += ' hint';
+      else if (S.hint && S.hint.ex && S.explain && S.hint.ex.targets.indexOf(s) >= 0) cls += ' target';
       if (s === checkSq) cls += ' check';
       el.className = cls;
       var html = '';
@@ -1775,7 +2168,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
       if (tset[s] && S.showLegal) html += b[s] || (s === pos.ep && Math.abs(b[S.selected]) === E.P) ? '<span class="ring"></span>' : '<span class="dot"></span>';
       el.innerHTML = html;
     }
-    renderPlayers(); renderStatus(); renderMoves(); renderControls(); renderCoach(); renderEval(); renderArrows(); renderOnline();
+    renderPlayers(); renderStatus(); renderMoves(); renderControls(); renderHintExplain(); renderCoach(); renderEval(); renderArrows(); renderOnline();
   }
   function sqRect(s) { return sqEls[s].getBoundingClientRect(); }
   function animatePiece(to, fromRect) {
@@ -1839,7 +2232,8 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     if (S.hinting) subTxt = '💡 Thinking of a good move…';
     else if (S.hint) {
       var p = S.pos.b[S.hint.from];
-      subTxt = '💡 Hint: move your ' + PIECE_NAME[Math.abs(p)] + ' from ' + E.sqName(S.hint.from) + ' to ' + E.sqName(S.hint.to) + ' (' + S.pos.san(S.hint.m, S.legal) + ') — blue arrow';
+      subTxt = '💡 Hint: move your ' + PIECE_NAME[Math.abs(p)] + ' from ' + E.sqName(S.hint.from) + ' to ' + E.sqName(S.hint.to) + ' (' + S.pos.san(S.hint.m, S.legal) + ') — blue arrow' +
+        (S.hint.ex && S.explain && S.hint.ex.targets.some(function (t) { return t !== S.hint.from && t !== S.hint.to; }) ? ', orange = key target' : '');
     }
     if (O.undoWait) subTxt = '↩️ Asked your friend to take back a move…';
     el.textContent = txt; sub.textContent = subTxt;
@@ -1873,7 +2267,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     $('colorLabel').textContent = S.mode === 'computer' ? 'I want to play' : S.mode === 'online' ? (O.role ? 'I play (switching starts a new game)' : 'I want to play') : 'Which side is me? (for the coach)';
     $('segCoachWho').style.display = S.coach ? '' : 'none';
     $('optLegal').checked = S.showLegal; $('optFlip').checked = S.autoFlip; $('optSound').checked = S.sound;
-    $('optCoach').checked = S.coach; $('optEval').checked = S.evalBar;
+    $('optCoach').checked = S.coach; $('optEval').checked = S.evalBar; $('optExplain').checked = S.explain;
     $('btnUndo').disabled = !S.history.length || !!S.promo || (S.mode === 'online' && (!O.connected || O.undoWait || !onlineUndoTarget()));
     $('btnUndo').textContent = S.mode === 'online' ? '↩️ Ask to undo' : '↩️ Undo';
     $('btnHint').disabled = !canInteract() || S.hinting;
@@ -1986,6 +2380,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     render();
   });
   $('optEval').addEventListener('change', function (e) { S.evalBar = e.target.checked; save(); if (S.evalBar && !S.evalKnown) requestEval(); render(); });
+  $('optExplain').addEventListener('change', function (e) { S.explain = e.target.checked; save(); render(); });
   $('optLegal').addEventListener('change', function (e) { S.showLegal = e.target.checked; save(); render(); });
   $('optFlip').addEventListener('change', function (e) {
     S.autoFlip = e.target.checked;
@@ -2218,7 +2613,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         mode: S.mode, human: S.human, level: S.level, showLegal: S.showLegal, autoFlip: S.autoFlip, sound: S.sound,
-        coach: S.coach, coachWho: S.coachWho, evalBar: S.evalBar,
+        coach: S.coach, coachWho: S.coachWho, evalBar: S.evalBar, explain: S.explain,
         online: O.role ? { role: O.role, code: O.code, myColor: O.myColor } : null,
         moves: S.history.map(function (h) { return E.uci(h.m); })
       }));
@@ -2232,7 +2627,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     if (d.human === 1 || d.human === -1) S.human = d.human;
     if (LEVEL_NAME[d.level]) S.level = d.level;
     S.showLegal = d.showLegal !== false; S.autoFlip = !!d.autoFlip; S.sound = d.sound !== false;
-    S.coach = d.coach !== false; S.coachWho = d.coachWho === 'both' ? 'both' : 'me'; S.evalBar = d.evalBar !== false;
+    S.coach = d.coach !== false; S.coachWho = d.coachWho === 'both' ? 'both' : 'me'; S.evalBar = d.evalBar !== false; S.explain = d.explain !== false;
     var pos = new E.Position(), ms = [];
     for (var i = 0; i < (d.moves || []).length; i++) { var m = pos.parseUci(d.moves[i]); if (!m) break; ms.push(m); pos.make(m); }
     resetGame(ms);
