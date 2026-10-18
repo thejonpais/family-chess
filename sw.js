@@ -1,5 +1,5 @@
 // Family Chess service worker: cache the app shell so it opens offline from the Home Screen.
-var CACHE = 'family-chess-5ac0ffab07';
+var CACHE = 'family-chess-a558e17cf0';
 var SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));

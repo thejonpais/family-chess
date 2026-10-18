@@ -211,6 +211,20 @@ button, .seg button, .toggle, .btn { touch-action: manipulation; -webkit-user-se
 .hintx .btn.small { margin-top: 6px; font-size: 13.5px; padding: 8px 10px; min-height: 40px; width: 100%; }
 @media (max-width: 520px) { .hintx { font-size: 13.5px; } .hintx .hx-eval, .hintx .hx-plan { font-size: 13px; } }
 
+/* Coach's best move (hint merged into the coach card) */
+.coach .hintx { margin: 4px 0 8px; }
+.hintx .hx-how { font-size: 13.5px; color: #2b3b55; margin-bottom: 4px; }
+.hintx .hx-sub { font-weight: 800; font-size: 13.5px; margin-top: 6px; color: #23395d; }
+.hintx .hx-note { font-weight: 600; color: var(--muted); font-size: 12px; }
+.hintx .hx-alt { margin-top: 6px; background: #f3f4f7; border-radius: 10px; padding: 6px 8px; }
+.hintx .btn.small.alttog { background: #fff; }
+.k-blue { color: #1f5fbf; font-weight: 800; } .k-orange { color: #d9730d; font-weight: 800; }
+#coachAsk .ask { margin: 2px 0 8px; }
+#coachAsk .btn.wide { width: 100%; min-height: 44px; font-size: 15px; }
+.review .whybtn { margin-top: 6px; font-size: 13.5px; padding: 8px 10px; min-height: 40px; width: 100%; }
+.why-better { font-size: 14px; }
+.why-better ul { padding-left: 18px; }
+
 </style>
 </head>
 <body>
@@ -252,11 +266,12 @@ button, .seg button, .toggle, .btn { touch-action: manipulation; -webkit-user-se
     <div class="card">
       <div class="status" id="status">White to move</div>
       <div class="substatus" id="substatus"></div>
-      <div class="hintx" id="hintExplain" hidden></div>
       <div class="prompt" id="prompt" hidden></div>
     </div>
     <div class="card coach" id="coachCard">
       <div class="coach-head"><span>🧑‍🏫 Coach</span><span class="coach-for" id="coachFor"></span></div>
+      <div id="coachAsk"></div>
+      <div class="hintx" id="hintExplain" hidden></div>
       <div id="coachReview"></div>
       <div id="coachTips"></div>
       <div id="coachSummary"></div>
@@ -265,7 +280,7 @@ button, .seg button, .toggle, .btn { touch-action: manipulation; -webkit-user-se
       <div class="buttons">
         <button class="btn primary" id="btnNew">✨ New game</button>
         <button class="btn" id="btnUndo">↩️ Undo</button>
-        <button class="btn blue" id="btnHint">💡 Hint</button>
+        <button class="btn blue" id="btnHint">💡 Best move?</button>
         <button class="btn" id="btnFlip">🔄 Flip board</button>
         <button class="btn castle" id="btnCastleShort" data-side="short">🏰 Castle short (0-0)</button>
         <button class="btn castle" id="btnCastleLong" data-side="long">🏰 Castle long (0-0-0)</button>
@@ -320,7 +335,7 @@ button, .seg button, .toggle, .btn { touch-action: manipulation; -webkit-user-se
       </div>
       <div class="label">Helpers</div>
       <div class="toggles">
-        <label class="toggle"><span>💡 Explain my hints</span><input type="checkbox" id="optExplain"><span class="sw"></span></label>
+        <label class="toggle"><span>💡 Coach explains its best move</span><input type="checkbox" id="optExplain"><span class="sw"></span></label>
         <label class="toggle"><span>Show legal moves</span><input type="checkbox" id="optLegal"><span class="sw"></span></label>
         <label class="toggle" id="flipToggle"><span>Auto-flip board each turn</span><input type="checkbox" id="optFlip"><span class="sw"></span></label>
         <label class="toggle"><span>Sounds</span><input type="checkbox" id="optSound"><span class="sw"></span></label>
@@ -869,6 +884,11 @@ var ChessEngine = (function () {
 
     var root = pos.legalMoves();
     if (!root.length) return { move: 0, score: pos.inCheck() ? -MATE : 0, depth: 0, nodes: 0, ms: 0 };
+    // Optional root filters (used by the coach to score "the next-best move" fairly): exclude / only.
+    if (opts.exclude || opts.only) {
+      root = root.filter(function (m) { return !(opts.exclude && opts.exclude.indexOf(m) >= 0) && !(opts.only && opts.only.indexOf(m) < 0); });
+      if (!root.length) return { move: 0, score: -INF, depth: 0, nodes: 0, ms: 0 };
+    }
     for (var si = root.length - 1; si > 0; si--) { var rj = (Math.random() * (si + 1)) | 0, tmp = root[si]; root[si] = root[rj]; root[rj] = tmp; }
     var bestMove = root[0], bestScore = 0, done = 0, us = pos.side;
     if (root.length === 1 && !opts.forceSearch) return { move: root[0], score: 0, depth: 0, nodes: 0, ms: 0 };
@@ -1587,13 +1607,103 @@ if (typeof module !== 'undefined' && module.exports) module.exports = ChessEngin
     };
   }
 
-  // Hint with explanation: engine's hint move + why.
+  // How much worse a move is, in plain words (cp >= 0, from the mover's side).
+  function gapPhrase(cp) {
+    if (cp < 25) return 'about the same';
+    if (cp < 60) return 'a tiny bit worse';
+    if (cp < 110) return 'a little worse';
+    if (cp < 170) return 'about a pawn worse';
+    if (cp < 260) return 'about two pawns worse';
+    if (cp < 450) return 'about a knight worse';
+    if (cp < 700) return 'about a rook worse';
+    return 'much worse';
+  }
+  function pawns(cp) {
+    if (isMateScore(cp)) return cp > 0 ? 'mate' : '−mate';
+    var v = Math.round(cp / 10) / 10;
+    return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(1);
+  }
+  // Material for `us` at the end of `line` (first 6 plies), clamped so we never claim more than the score supports.
+  function lineNet(pos, line, us, score, matNow) {
+    var made = 0;
+    for (var j = 0; j < line.length && j < 6; j++) { pos.make(line[j]); made++; if (!pos.legalMoves().length) break; }
+    var n = settledMaterial(pos, us) - matNow;
+    while (made--) pos.unmake();
+    if (!isMateScore(score)) {
+      var sup = Math.round((score - matNow * 100) / 100);
+      if (n > 0) n = Math.max(0, Math.min(n, sup));
+      else if (n < 0) n = Math.min(0, Math.max(n, sup));
+    }
+    return n;
+  }
+
+  // Compare the best move with the engine's next-best move, at the same search depth, and say why the best one wins.
+  // Every claim is read off the board or the engine's lines; nothing is guessed.
+  function compareAlt(pos, best, bestScore, bestDepth, ex, opts) {
+    opts = opts || {};
+    var us = pos.side, legal = pos.legalMoves();
+    if (legal.length < 2) return { only: true, lines: ["It's your only legal move, so there's nothing to compare."] };
+    var alt = E.search(pos, { depth: isMateScore(bestScore) ? 64 : (bestDepth || 64), time: opts.altTime || 700, forceSearch: true, exclude: [best] });
+    if (!alt.move) return null;
+    var altLine = E.pv(pos, alt.pv || alt.move, 7), altScore = alt.score, bScore = bestScore, depth = Math.min(alt.depth, bestDepth || alt.depth);
+    // Same depth for both, so the comparison is fair.
+    if (!isMateScore(bestScore) && alt.depth >= 1) {
+      var rb = E.search(pos, { depth: alt.depth, time: opts.altTime || 700, forceSearch: true, only: [best] });
+      if (rb.move === best && rb.depth >= alt.depth) bScore = rb.score;
+    }
+    var gap = Math.max(0, bScore - altScore);
+    var altSan = pos.san(alt.move, legal), bestSan = pos.san(best, legal), matNow = material(pos, us);
+    var altNet = lineNet(pos, altLine, us, altScore, matNow), bestNet = ex ? ex.net : 0;
+    var hangBefore = C.hanging(pos, us), altTo = E.toOf(alt.move), altFrom = E.fromOf(alt.move);
+    var altMoved = NAMES[Math.abs(pos.b[altFrom])];
+    pos.make(alt.move);
+    var altMates = pos.inCheck() && !pos.legalMoves().length;
+    var lets = altMates ? 0 : C.mateInOne(pos), letsSan = lets ? pos.san(lets) : '';
+    var hangAfter = C.hanging(pos, us);
+    var reply = altLine.length > 1 ? altLine[1] : 0, replySan = reply ? pos.san(reply) : '', replySay = reply ? sayMove(pos, reply) : '';
+    pos.unmake();
+    var out = { move: alt.move, san: altSan, say: sayMove(pos, alt.move), score: altScore, bestScore: bScore, gap: gap, depth: depth,
+      gapText: gapPhrase(gap), lines: [], pvSan: [] };
+    var mk = 0; altLine.forEach(function (m) { out.pvSan.push(pos.san(m)); pos.make(m); mk++; }); while (mk--) pos.unmake();
+    var bestMate = isMateScore(bScore) && bScore > 0, altMate = isMateScore(altScore) && altScore > 0;
+    // 1) headline with the eval difference in plain words
+    if (bestMate && altMate) out.lines.push(altSan + ' also leads to checkmate, but ' + bestSan + ' gets there ' + (Math.ceil((MATE - bScore) / 2) < Math.ceil((MATE - altScore) / 2) ? 'faster' : 'just as fast') + '.');
+    else if (bestMate) out.lines.push(Math.ceil((MATE - bScore) / 2) <= 1 ? altSan + ' misses the checkmate — ' + bestSan + ' wins the game right now.' : altSan + ' misses the forced checkmate that ' + bestSan + ' starts.');
+    else if (gap < 25) out.lines.push(altSan + ' is about as good — the engine gives them almost the same score' + (altScore <= bScore ? ' (' + pawns(bScore) + ' vs ' + pawns(altScore) + ')' : '') + ', so either is a fine choice.');
+    else if (evalPhrase(altScore) === evalPhrase(bScore)) out.lines.push('With ' + altSan + ' you would still be ' + evalPhrase(altScore) + ', but it is ' + gapPhrase(gap) + ' (engine: ' + pawns(bScore) + ' vs ' + pawns(altScore) + ').');
+    else out.lines.push('With ' + altSan + ' you would be ' + evalPhrase(altScore) + ' instead of ' + evalPhrase(bScore) + ' — ' + gapPhrase(gap) + ' (engine: ' + pawns(bScore) + ' vs ' + pawns(altScore) + ').');
+    out.close = gap < 25 && !bestMate && !altMate;
+    if (gap >= 25 || bestMate) {
+      // 2) concrete reasons, only when the board/engine line backs them up
+      var said = 0;
+      if (lets) { out.lines.push('It would let them checkmate you with ' + letsSan + '!'); said++; }
+      if (!said && altNet < 0 && altNet < bestNet) {
+        var newly = hangAfter.filter(function (h) { return !hangBefore.some(function (x) { return x.sq === h.sq; }) || h.sq === altTo; })[0];
+        var still = hangAfter.filter(function (h) { return hangBefore.some(function (x) { return x.sq === h.sq && x.piece === h.piece; }) && h.sq !== altTo; })[0];
+        if (newly) out.lines.push(newly.sq === altTo ? 'Your ' + altMoved + ' on ' + sqn(altTo) + " wouldn't be safe there — they can win it." : 'It leaves your ' + NAMES[newly.piece] + ' on ' + sqn(newly.sq) + ' open to attack.');
+        else if (still) out.lines.push("It doesn't deal with the attack on your " + NAMES[still.piece] + ' on ' + sqn(still.sq) + '.');
+        else out.lines.push('Following the engine line, you would lose about ' + worth(altNet) + '.');
+        said++;
+      } else if (!said && !bestMate && Math.min(bestNet - altNet, Math.round(gap / 100)) >= 1) {
+        out.lines.push(bestSan + ' wins about ' + worth(Math.min(bestNet - altNet, Math.round(gap / 100))) + ' more than ' + altSan + ' does.'); said++;
+      }
+      if (reply && !lets && replySan && out.lines.join(' ').indexOf(replySan) < 0) out.lines.push('After ' + altSan + ', their best answer is ' + replySan + ' (' + replySay + ').');
+    }
+    return out;
+  }
+
+  // Hint with explanation: engine's hint move + why + how it compares with the next-best move.
   function hintExplain(pos, opts) {
     opts = opts || {};
     var r = E.think(pos, opts.level || 'hint');
     if (!r.move) return r;
     var line = E.pv(pos, r.pv || r.move, 8);
+    var fen0 = pos.fen();
     r.ex = explainMove(pos, r.move, { score: r.score, pv: line });
+    if (opts.compare !== false && r.ex) {
+      try { r.alt = compareAlt(pos, r.move, r.score, r.depth, r.ex, opts); } catch (e) { r.alt = null; }
+    }
+    if (pos.fen() !== fen0) throw new Error('position changed');
     return r;
   }
 
@@ -1622,7 +1732,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = ChessEngin
     return out;
   }
 
-  C.explainMove = explainMove; C.hintExplain = hintExplain; C.whyNot = whyNot;
+  C.explainMove = explainMove; C.hintExplain = hintExplain; C.compareAlt = compareAlt; C.gapPhrase = gapPhrase; C.whyNot = whyNot;
   C.evalPhrase = evalPhrase; C.sayMove = sayMove;
 })(ChessEngine);
 
@@ -1738,7 +1848,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     });
   }
   function cancelSearch() { ai.cancelAll(); S.thinking = false; S.hinting = false; }
-  function cancelCoach() { coachPool.cancelAll(); S.history.forEach(function (h) { h.pending = false; }); }
+  function cancelCoach() { coachPool.cancelAll(); S.history.forEach(function (h) { h.pending = false; h.whyBusy = false; }); }
 
   // ---------- Who's who ----------
   function mySide() { return S.mode === 'online' ? O.myColor : S.human; }
@@ -1879,7 +1989,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
       S.hinting = false;
       if (S.history.length !== n) { render(); return; }
       if (d.move && S.legal.indexOf(d.move) >= 0) {
-        S.hint = { from: E.fromOf(d.move), to: E.toOf(d.move), m: d.move, ex: S.explain ? d.ex || null : null, why: null, whyBusy: false };
+        S.hint = { from: E.fromOf(d.move), to: E.toOf(d.move), m: d.move, ex: S.explain ? d.ex || null : null, alt: S.explain ? d.alt || null : null, showAlt: false, why: null, whyBusy: false };
         S.selected = E.fromOf(d.move);
       }
       render();
@@ -1898,14 +2008,24 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
       h.whyBusy = false; h.why = r; render();
     });
   }
+  // The coach's best-move suggestion (the hint), with why it is best and how it beats the next-best move.
+  function hintVisible() { return !!(S.hint && S.hint.ex && S.explain); }
   function renderHintExplain() {
     var box = $('hintExplain'), h = S.hint;
-    if (!h || !h.ex || !S.explain) { box.hidden = true; box.innerHTML = ''; return; }
-    var ex = h.ex, idx = myLastMoveIdx();
-    var html = '<div class="hx-title">🧠 Why ' + esc(ex.san) + '?</div><ul class="hx-why">' +
+    if (!hintVisible()) { box.hidden = true; box.innerHTML = ''; return; }
+    var ex = h.ex, alt = h.alt, idx = myLastMoveIdx(), pc = S.pos.b[h.from];
+    var html = '<div class="hx-title">⭐ Coach\'s best move: ' + esc(ex.san) + '</div>' +
+      '<div class="hx-how">Move your ' + esc(PIECE_NAME[Math.abs(pc)]) + ' from ' + E.sqName(h.from) + ' to ' + E.sqName(h.to) + ' — follow the <span class="k-blue">blue arrow</span>' +
+      (ex.targets.some(function (t) { return t !== h.from && t !== h.to; }) ? '; <span class="k-orange">orange</span> squares are the key targets' : '') + '.</div>' +
+      '<div class="hx-sub">🧠 Why it\'s the best move</div><ul class="hx-why">' +
       ex.sentences.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' +
       '<div class="hx-eval">📊 ' + esc(ex.evalText) + '</div>' +
       (ex.plan ? '<div class="hx-plan">🗺️ <b>Plan:</b> ' + esc(ex.plan) + '</div>' : '');
+    if (alt && alt.lines && alt.lines.length) {
+      html += '<div class="hx-alt"><div class="hx-sub">' + (alt.only ? '🆚 Other moves' : '🆚 Why not ' + esc(alt.san) + ' instead? <span class="hx-note">(the next-best move)</span>') + '</div><ul>' +
+        alt.lines.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' +
+        (alt.only ? '' : '<button class="btn small alttog" id="btnShowAlt">' + (h.showAlt ? '🙈 Hide ' + esc(alt.san) + ' arrow' : '👀 Show ' + esc(alt.san) + ' on the board (gray arrow)') + '</button>') + '</div>';
+    }
     if (idx >= 0) {
       if (h.why) html += '<div class="hx-whynot"><div class="hx-title small">🤔 Your last move, ' + esc(h.why.san) + '</div><ul>' +
         h.why.lines.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>';
@@ -1913,6 +2033,23 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     }
     box.innerHTML = html; box.hidden = false;
     var b = $('btnWhyNot'); if (b) b.onclick = whyNotMine;
+    var sa = $('btnShowAlt'); if (sa) sa.onclick = function () { if (S.hint === h) { h.showAlt = !h.showAlt; render(); } };
+  }
+  function renderCoachAsk() {
+    var el = $('coachAsk'), html = '';
+    if (S.hinting) html = '<div class="pending ask">🧑‍🏫 Thinking about your best move… (a few seconds)</div>';
+    else if (!S.hint && canInteract() && !S.st.over) html = '<button class="btn blue wide ask" id="btnCoachBest">💡 Show me the best move — and why</button>';
+    el.innerHTML = html;
+    var b = $('btnCoachBest'); if (b) b.onclick = hint;
+  }
+  function whyBetter(idx) {
+    var rec = S.history[idx]; if (!rec || !rec.review || rec.why || rec.whyBusy) return;
+    rec.whyBusy = true; render();
+    coachPool.post({ kind: 'whynot', moves: movesUpTo(idx), move: rec.m, review: rec.review }, function (r) {
+      rec.whyBusy = false;
+      if (S.history[idx] !== rec) return;
+      rec.why = r; render();
+    });
   }
 
   // ---------- Coach ----------
@@ -1970,8 +2107,9 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
   }
   function renderCoach() {
     var card = $('coachCard');
-    card.hidden = !S.coach;
-    if (!S.coach) return;
+    card.hidden = !S.coach && !hintVisible();
+    if (!S.coach) { $('coachFor').textContent = ''; $('coachAsk').innerHTML = ''; $('coachReview').innerHTML = ''; $('coachTips').innerHTML = ''; $('coachSummary').innerHTML = ''; return; }
+    renderCoachAsk();
     $('coachFor').textContent = S.coachWho === 'both' ? 'coaching both sides' : (S.mode === 'two' ? 'coaching ' + COLOR_NAME[mySide()] : 'coaching you');
     // review of the latest coached move
     var idx = latestReviewIdx(), html = '';
@@ -1984,6 +2122,11 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
           esc(who) + ' played ' + esc(r.playedSan) + '</span></div><ul>' +
           r.reasons.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>';
         if (r.verdict !== 'best' && r.bestSan) html += '<div class="better">Better was <b>' + esc(r.bestSan) + '</b> — see the green arrow ➜</div>';
+        if (r.verdict !== 'best' && r.verdict !== 'good' && r.bestSan && isHumanSide(r.side)) {
+          if (rec.why) html += '<div class="hx-whynot why-better"><div class="hx-title small">🧠 Why ' + esc(r.bestSan) + ' was better</div><ul>' +
+            rec.why.lines.filter(function (t) { return r.reasons.indexOf(t) < 0; }).map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>';
+          else html += '<button class="btn small whybtn" id="btnWhyBetter"' + (rec.whyBusy ? ' disabled' : '') + '>' + (rec.whyBusy ? '🧠 Thinking…' : '🧠 Why is ' + esc(r.bestSan) + ' better?') + '</button>';
+        }
         if ((r.verdict === 'mistake' || r.verdict === 'blunder') && S.mode !== 'online' && isHumanSide(r.side) && idx >= S.history.length - 2)
           html += '<button class="btn tryagain" id="btnTryAgain">↩️ Take it back &amp; try again</button>';
         html += '</div>';
@@ -1991,6 +2134,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     } else if (!S.history.length) html = '<div class="pending">Make a move and I\'ll tell you how it went. 🙂</div>';
     $('coachReview').innerHTML = html;
     var tb = $('btnTryAgain'); if (tb) tb.onclick = undo;
+    var wb = $('btnWhyBetter'); if (wb) wb.onclick = function () { whyBetter(idx); };
     // live tips
     var tips = currentTips(), th = '';
     if (tips && tips.length) {
@@ -2067,6 +2211,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
   function renderArrows() {
     var h = '';
     if (S.arrow && S.coach) h += arrowSvg(S.arrow.from, S.arrow.to, 'rgba(34,160,70,.82)');
+    if (S.hint && S.hint.showAlt && S.hint.alt && S.hint.alt.move && hintVisible()) h += arrowSvg(E.fromOf(S.hint.alt.move), E.toOf(S.hint.alt.move), 'rgba(120,120,130,.6)');
     if (S.hint) h += arrowSvg(S.hint.from, S.hint.to, 'rgba(40,120,230,.8)');
     $('arrows').innerHTML = h;
   }
@@ -2232,7 +2377,8 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     if (S.hinting) subTxt = '💡 Thinking of a good move…';
     else if (S.hint) {
       var p = S.pos.b[S.hint.from];
-      subTxt = '💡 Hint: move your ' + PIECE_NAME[Math.abs(p)] + ' from ' + E.sqName(S.hint.from) + ' to ' + E.sqName(S.hint.to) + ' (' + S.pos.san(S.hint.m, S.legal) + ') — blue arrow' +
+      if (hintVisible()) subTxt = '💡 Best move: ' + S.pos.san(S.hint.m, S.legal) + ' (blue arrow) — the Coach explains why ⬇️';
+      else subTxt = '💡 Hint: move your ' + PIECE_NAME[Math.abs(p)] + ' from ' + E.sqName(S.hint.from) + ' to ' + E.sqName(S.hint.to) + ' (' + S.pos.san(S.hint.m, S.legal) + ') — blue arrow' +
         (S.hint.ex && S.explain && S.hint.ex.targets.some(function (t) { return t !== S.hint.from && t !== S.hint.to; }) ? ', orange = key target' : '');
     }
     if (O.undoWait) subTxt = '↩️ Asked your friend to take back a move…';
@@ -2271,7 +2417,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     $('btnUndo').disabled = !S.history.length || !!S.promo || (S.mode === 'online' && (!O.connected || O.undoWait || !onlineUndoTarget()));
     $('btnUndo').textContent = S.mode === 'online' ? '↩️ Ask to undo' : '↩️ Undo';
     $('btnHint').disabled = !canInteract() || S.hinting;
-    $('btnHint').textContent = S.hinting ? '💡 Thinking…' : '💡 Hint';
+    $('btnHint').textContent = S.hinting ? '💡 Thinking…' : '💡 Best move?';
     [['btnCastleShort', 'short', 'Castle short (0-0): king goes two squares toward the h-rook, rook hops over.'],
      ['btnCastleLong', 'long', 'Castle long (0-0-0): king goes two squares toward the a-rook, rook hops over.']].forEach(function (c) {
       var why = castleBlockReason(c[1]), btn = $(c[0]);
