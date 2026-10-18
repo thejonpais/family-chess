@@ -225,6 +225,45 @@ button, .seg button, .toggle, .btn { touch-action: manipulation; -webkit-user-se
 .why-better { font-size: 14px; }
 .why-better ul { padding-left: 18px; }
 
+/* Live coach while moving */
+.sq::after { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.sq.lv-best::after, .sq.lv-good::after { background: rgba(40, 170, 80, .22); }
+.sq.lv-inaccuracy::after { background: rgba(240, 190, 30, .26); }
+.sq.lv-mistake::after { background: rgba(240, 120, 30, .28); }
+.sq.lv-blunder::after { background: rgba(220, 40, 40, .26); }
+.sq.lv-best .dot, .sq.lv-good .dot { background: rgba(30, 150, 60, .7); }
+.sq.lv-inaccuracy .dot { background: rgba(215, 165, 0, .8); }
+.sq.lv-mistake .dot { background: rgba(230, 110, 20, .8); }
+.sq.lv-blunder .dot { background: rgba(210, 30, 30, .78); }
+.sq.lv-best .ring, .sq.lv-good .ring { border-color: rgba(30, 150, 60, .7); }
+.sq.lv-inaccuracy .ring { border-color: rgba(215, 165, 0, .8); }
+.sq.lv-mistake .ring { border-color: rgba(230, 110, 20, .8); }
+.sq.lv-blunder .ring { border-color: rgba(210, 30, 30, .78); }
+.sq.lv-top::after { box-shadow: inset 0 0 0 calc(var(--board) / 8 * .06) rgba(30, 150, 60, .75); }
+.sq.lv-hover.lv-best::after, .sq.lv-hover.lv-good::after { background: rgba(40, 170, 80, .62); }
+.sq.lv-hover.lv-inaccuracy::after { background: rgba(240, 190, 30, .62); }
+.sq.lv-hover.lv-mistake::after { background: rgba(240, 120, 30, .62); }
+.sq.lv-hover.lv-blunder::after { background: rgba(220, 40, 40, .6); }
+.sq.lv-hover.lv-wait::after { background: rgba(120, 120, 130, .35); }
+.livetip { position: absolute; left: 4%; right: 4%; top: 2%; z-index: 30; pointer-events: none; background: rgba(255,255,255,.96); border-radius: 12px;
+  padding: 6px 10px; box-shadow: 0 4px 14px rgba(0,0,0,.25); font-size: 14px; line-height: 1.3; border-left: 6px solid #999; }
+.livetip.bottom { top: auto; bottom: 2%; }
+.livetip[hidden] { display: none; }
+.livetip b { display: block; font-size: 15px; }
+.livetip span { display: block; color: #333; }
+.livetip.lt-best, .livetip.lt-good { border-left-color: #22a04f; } .livetip.lt-best b, .livetip.lt-good b { color: #17803d; }
+.livetip.lt-inaccuracy { border-left-color: #d9a400; } .livetip.lt-inaccuracy b { color: #9a7400; }
+.livetip.lt-mistake { border-left-color: #e8741e; } .livetip.lt-mistake b { color: #b8560f; }
+.livetip.lt-blunder { border-left-color: #d42a2a; } .livetip.lt-blunder b { color: #b51e1e; }
+.livetip.lt-wait b { color: #666; font-weight: 700; }
+@media (max-width: 520px) { .livetip { font-size: 13px; padding: 5px 8px; } .livetip b { font-size: 14px; } }
+
+.liveline { margin-top: 6px; padding: 6px 9px; border-radius: 10px; background: #f4f7f2; border-left: 5px solid #999; font-size: 13.5px; line-height: 1.3; }
+.liveline[hidden] { display: none; }
+.liveline span { color: #444; }
+.liveline.lt-best, .liveline.lt-good { border-left-color: #22a04f; } .liveline.lt-inaccuracy { border-left-color: #d9a400; }
+.liveline.lt-mistake { border-left-color: #e8741e; } .liveline.lt-blunder { border-left-color: #d42a2a; }
+
 </style>
 </head>
 <body>
@@ -239,6 +278,7 @@ button, .seg button, .toggle, .btn { touch-action: manipulation; -webkit-user-se
     <div class="frame">
       <div id="board" aria-label="Chess board"></div>
       <svg class="arrows" id="arrows" viewBox="0 0 800 800" preserveAspectRatio="none"></svg>
+      <div class="livetip" id="liveTip" hidden></div>
       <div class="overlay" id="promoOverlay" hidden>
         <div class="dialog">
           <h2>Pick a new piece!</h2>
@@ -266,6 +306,7 @@ button, .seg button, .toggle, .btn { touch-action: manipulation; -webkit-user-se
     <div class="card">
       <div class="status" id="status">White to move</div>
       <div class="substatus" id="substatus"></div>
+      <div class="liveline" id="liveLine" hidden></div>
       <div class="prompt" id="prompt" hidden></div>
     </div>
     <div class="card coach" id="coachCard">
@@ -336,6 +377,7 @@ button, .seg button, .toggle, .btn { touch-action: manipulation; -webkit-user-se
       <div class="label">Helpers</div>
       <div class="toggles">
         <label class="toggle"><span>💡 Coach explains its best move</span><input type="checkbox" id="optExplain"><span class="sw"></span></label>
+        <label class="toggle"><span>🎯 Live coach while moving</span><input type="checkbox" id="optLive"><span class="sw"></span></label>
         <label class="toggle"><span>Show legal moves</span><input type="checkbox" id="optLegal"><span class="sw"></span></label>
         <label class="toggle" id="flipToggle"><span>Auto-flip board each turn</span><input type="checkbox" id="optFlip"><span class="sw"></span></label>
         <label class="toggle"><span>Sounds</span><input type="checkbox" id="optSound"><span class="sw"></span></label>
@@ -893,8 +935,11 @@ var ChessEngine = (function () {
     var bestMove = root[0], bestScore = 0, done = 0, us = pos.side;
     if (root.length === 1 && !opts.forceSearch) return { move: root[0], score: 0, depth: 0, nodes: 0, ms: 0 };
     var lastScores = null, bestPv = [root[0]];
+    var allScores = !!opts.allScores;
     for (var d = 1; d <= maxDepth && d < MAXPLY; d++) {
-      if (noise) {
+      // allScores: depth 1 always finishes (it is tiny) so every root move gets a score.
+      if (allScores) deadline = d === 1 ? Infinity : start + timeMs;
+      if (noise || allScores) {
         // Exact score for every root move, then choose with some randomness (weaker, more human play).
         var scores = [];
         for (var i = 0; i < root.length; i++) {
@@ -907,6 +952,7 @@ var ChessEngine = (function () {
         if (stop && !lastScores) lastScores = scores.length ? scores : null;
         if (!stop) lastScores = scores; else break;
         done = d;
+        if (allScores && opts.onDepth) opts.onDepth(root.slice(), scores.slice(), d);
       } else {
         var alpha = -INF, iterBest = 0, iterScore = -INF;
         for (var k = 0; k < root.length; k++) {
@@ -934,6 +980,11 @@ var ChessEngine = (function () {
         if (Math.abs(bestScore) > MATE - 1000) break;
       }
       if (Date.now() - start > timeMs * 0.5) break;
+    }
+    if (allScores && lastScores) {
+      var bi3 = 0;
+      for (var q3 = 1; q3 < lastScores.length; q3++) if (lastScores[q3] > lastScores[bi3]) bi3 = q3;
+      return { move: root[bi3], score: lastScores[bi3], depth: done, nodes: nodes, ms: Date.now() - start, root: root, scores: lastScores };
     }
     if (noise && lastScores) {
       var bi2 = 0, bv = -Infinity;
@@ -1732,7 +1783,95 @@ if (typeof module !== 'undefined' && module.exports) module.exports = ChessEngin
     return out;
   }
 
-  C.explainMove = explainMove; C.hintExplain = hintExplain; C.compareAlt = compareAlt; C.gapPhrase = gapPhrase; C.whyNot = whyNot;
+  // ---------- Live coach: score every legal move once, then give each a verdict + one-line reason ----------
+  var LV_ORDER = ['best', 'good', 'inaccuracy', 'mistake', 'blunder'];
+  function verdictFor(drop, isBest) { return (isBest || drop < 0.03) ? 'best' : drop < 0.10 ? 'good' : drop < 0.20 ? 'inaccuracy' : drop < 0.30 ? 'mistake' : 'blunder'; }
+  function captureSan(pos, from, to) {
+    var lm = pos.legalMoves();
+    for (var i = 0; i < lm.length; i++) if (E.fromOf(lm[i]) === from && E.toOf(lm[i]) === to) return pos.san(lm[i], lm);
+    return '';
+  }
+  function liveBuild(pos, root, scores, depth, ctx) {
+    var us = pos.side, them = -us, legal = pos.legalMoves(), bestI = 0, i;
+    for (i = 1; i < scores.length; i++) if (scores[i] > scores[bestI]) bestI = i;
+    var bestM = root[bestI], bestSc = scores[bestI], bestSan = pos.san(bestM, legal), wcBest = C.wc(bestSc);
+    if (!ctx.ready) {
+      ctx.ready = true;
+      ctx.mateBefore = C.mateInOne(pos, legal); ctx.mateBeforeSan = ctx.mateBefore ? pos.san(ctx.mateBefore, legal) : '';
+      ctx.hangBefore = C.hanging(pos, us);
+      ctx.freeTheirs = C.hanging(pos, them);
+    }
+    // what the best move does about our hanging pieces
+    pos.make(bestM); var hangAfterBest = C.hanging(pos, us); pos.unmake();
+    var out = [];
+    for (i = 0; i < root.length; i++) {
+      var m = root[i], sc = scores[i], drop = Math.max(0, wcBest - C.wc(sc)), gap = bestSc - sc;
+      var from = E.fromOf(m), to = E.toOf(m), fl = E.flagsOf(m), moved = Math.abs(pos.b[from]);
+      var capd = (fl & E.F_EP) ? P : Math.abs(pos.b[to]);
+      var v = verdictFor(drop, m === bestM), why = '';
+      pos.make(m);
+      var chk = pos.inCheck(), mated = chk && pos.legalMoves().length === 0;
+      var theirMate = mated ? 0 : C.mateInOne(pos), theirMateSan = theirMate ? pos.san(theirMate) : '';
+      if (theirMate && !(isMateScore(bestSc) && bestSc < 0)) v = 'blunder';
+      var bad = LV_ORDER.indexOf(v) >= 2;
+      if (mated) why = 'checkmate!';
+      else if (bad) {
+        var hangAfter = C.hanging(pos, us), h0 = null, hN = null, hS = null, j;
+        for (j = 0; j < hangAfter.length; j++) {
+          var h = hangAfter[j];
+          if (h.gain < 100 || gap < Math.min(h.gain, 300) * 0.4) continue;
+          var was = ctx.hangBefore.some(function (x) { return x.sq === h.sq && x.piece === h.piece; });
+          if (h.sq === to && !h0) h0 = h;
+          else if (!was && !hN) hN = h;
+          else if (was && !hS && !hangAfterBest.some(function (x) { return x.sq === h.sq; })) hS = h;
+        }
+        if (theirMate) why = 'lets them checkmate with ' + theirMateSan;
+        else if (isMateScore(sc) && sc < 0 && !(isMateScore(bestSc) && bestSc < 0)) why = 'walks into a forced checkmate';
+        else if (ctx.mateBefore && ctx.mateBefore !== m) why = 'misses checkmate with ' + ctx.mateBeforeSan;
+        else if (isMateScore(bestSc) && bestSc > 0) why = 'misses a forced checkmate (' + bestSan + ')';
+        else if (h0) why = 'hangs your ' + NAMES[h0.piece] + ' to ' + (captureSan(pos, h0.by, h0.sq) || NAMES[Math.abs(pos.b[h0.by])] + ' takes');
+        else if (hN) why = 'leaves your ' + NAMES[hN.piece] + ' on ' + sqn(hN.sq) + ' hanging to ' + (captureSan(pos, hN.by, hN.sq) || 'a capture');
+        else if (hS) why = "doesn't save your " + NAMES[hS.piece] + ' on ' + sqn(hS.sq);
+      }
+      pos.unmake();
+      if (!why && bad) {
+        var bestFree = null;
+        ctx.freeTheirs.forEach(function (x) { if (x.sq === E.toOf(bestM) && (E.flagsOf(bestM) & E.F_CAP)) bestFree = x; });
+        if (bestFree && to !== bestFree.sq && gap >= 100) why = 'misses ' + bestSan + ', which wins a ' + NAMES[bestFree.piece];
+        else why = C.gapPhrase(gap).replace('about the same', 'slightly worse') + ' than ' + bestSan;
+      }
+      if (!why && !bad) {
+        var free = null; ctx.freeTheirs.forEach(function (x) { if (x.sq === to && capd) free = x; });
+        pos.make(m);
+        var fk = C.forkTargets(pos, to);
+        var fkNames = fk.map(function (t) { return NAMES[Math.abs(pos.b[t])]; });
+        pos.unmake();
+        if (isMateScore(sc) && sc > 0) why = 'starts a forced checkmate';
+        else if (free && free.gain >= 100) why = 'wins their ' + NAMES[capd] + (ctx.freeTheirs.some(function (x) { return x.sq === to && !x.defended; }) ? ' for free' : '');
+        else if (fk.length >= 2 && C.see(pos, to, them) <= 0) why = 'fork on the ' + list(fkNames);
+        else if (fl & E.F_CASTLE) why = 'tucks your king away safely';
+        else if (chk && v === 'best') why = 'check — and the engine likes it';
+        else if (v === 'good') why = 'close to the best (' + bestSan + ')';
+        else if (v === 'best' && m !== bestM) why = 'as good as the top choice';
+        else why = "the engine's top choice";
+      }
+      out.push([m, v, why, sc]);
+    }
+    return { best: bestM, bestSan: bestSan, depth: depth, moves: out };
+  }
+  // opts: {time, depth, onDepth(result)}; onDepth fires after each finished depth >= 3 (progressive results).
+  function liveScores(pos, opts) {
+    opts = opts || {};
+    var ctx = {}, t0 = Date.now();
+    var r = E.search(pos, { allScores: true, forceSearch: true, depth: opts.depth || 7, time: opts.time || 900,
+      onDepth: opts.onDepth ? function (root, scores, d) { if (d >= 3) { var x = liveBuild(pos, root, scores, d, ctx); x.ms = Date.now() - t0; opts.onDepth(x); } } : null });
+    if (!r.scores) return { moves: [], depth: 0, best: 0, ms: Date.now() - t0 };
+    var res = liveBuild(pos, r.root, r.scores, r.depth, ctx);
+    res.ms = Date.now() - t0; res.final = true;
+    return res;
+  }
+
+  C.explainMove = explainMove; C.hintExplain = hintExplain; C.compareAlt = compareAlt; C.liveScores = liveScores; C.gapPhrase = gapPhrase; C.whyNot = whyNot;
   C.evalPhrase = evalPhrase; C.sayMove = sayMove;
 })(ChessEngine);
 
@@ -1756,7 +1895,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
   var S = {
     mode: 'computer', human: 1, level: 'easy',
     showLegal: true, autoFlip: false, sound: true,
-    coach: true, coachWho: 'me', evalBar: true, explain: true,
+    coach: true, coachWho: 'me', evalBar: true, explain: true, liveCoach: true, live: null,
     flipped: false,
     pos: new E.Position(),
     history: [],          // {m, san, cap, review, pending}
@@ -1796,6 +1935,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     'else if(d.kind==="hintx")r=ChessEngine.coach.hintExplain(p);' +
     'else if(d.kind==="whynot")r=ChessEngine.coach.whyNot(p,d.move,{review:d.review});' +
     'else if(d.kind==="eval")r={score:ChessEngine.coach.evalWhite(p,d.time)};' +
+    'else if(d.kind==="live")r=ChessEngine.coach.liveScores(p,{time:d.time,onDepth:function(x){x.id=d.id;x.partial=true;self.postMessage(x);}});' +
     'else r=ChessEngine.think(p,d.level);r.id=d.id;self.postMessage(r);};';
   function runJob(d) {
     var p = new E.Position();
@@ -1805,6 +1945,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     else if (d.kind === 'hintx') r = CO.hintExplain(p);
     else if (d.kind === 'whynot') r = CO.whyNot(p, d.move, { review: d.review });
     else if (d.kind === 'eval') r = { score: CO.evalWhite(p, d.time) };
+    else if (d.kind === 'live') r = CO.liveScores(p, { time: d.time });
     else r = E.think(p, d.level);
     r.id = d.id; return r;
   }
@@ -1831,13 +1972,13 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     if (this.w) this.w.postMessage(msg); else this.local(msg);
     return msg.id;
   };
-  Pool.prototype.done = function (r) { var j = this.jobs[r.id]; if (!j) return; delete this.jobs[r.id]; j.cb(r); };
+  Pool.prototype.done = function (r) { var j = this.jobs[r.id]; if (!j) return; if (!r.partial) delete this.jobs[r.id]; j.cb(r); };
   Pool.prototype.cancelAll = function () {
     if (Object.keys(this.jobs).length && this.w) { this.w.terminate(); this.w = null; }
     this.jobs = {};
   };
   Pool.prototype.busy = function () { return Object.keys(this.jobs).length > 0; };
-  var ai = new Pool(), coachPool = new Pool();
+  var ai = new Pool(), coachPool = new Pool(), livePool = new Pool();   // livePool: live coach while moving (this device only)
   function movesUpTo(n) { return S.history.slice(0, n).map(function (h) { return h.m; }); }
 
   function askAI(kind, level, cb) {
@@ -2313,6 +2454,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
       if (tset[s] && S.showLegal) html += b[s] || (s === pos.ep && Math.abs(b[S.selected]) === E.P) ? '<span class="ring"></span>' : '<span class="dot"></span>';
       el.innerHTML = html;
     }
+    startLive(); applyLive();
     renderPlayers(); renderStatus(); renderMoves(); renderControls(); renderHintExplain(); renderCoach(); renderEval(); renderArrows(); renderOnline();
   }
   function sqRect(s) { return sqEls[s].getBoundingClientRect(); }
@@ -2413,7 +2555,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     $('colorLabel').textContent = S.mode === 'computer' ? 'I want to play' : S.mode === 'online' ? (O.role ? 'I play (switching starts a new game)' : 'I want to play') : 'Which side is me? (for the coach)';
     $('segCoachWho').style.display = S.coach ? '' : 'none';
     $('optLegal').checked = S.showLegal; $('optFlip').checked = S.autoFlip; $('optSound').checked = S.sound;
-    $('optCoach').checked = S.coach; $('optEval').checked = S.evalBar; $('optExplain').checked = S.explain;
+    $('optCoach').checked = S.coach; $('optEval').checked = S.evalBar; $('optExplain').checked = S.explain; $('optLive').checked = S.liveCoach;
     $('btnUndo').disabled = !S.history.length || !!S.promo || (S.mode === 'online' && (!O.connected || O.undoWait || !onlineUndoTarget()));
     $('btnUndo').textContent = S.mode === 'online' ? '↩️ Ask to undo' : '↩️ Undo';
     $('btnHint').disabled = !canInteract() || S.hinting;
@@ -2425,6 +2567,97 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
       btn.title = why ? c[2].split(':')[0] + ' — ' + why : c[2];
     });
   }
+
+  // ---------- Live coach while moving ----------
+  // Every legal move is scored once, in its own worker, as soon as it is a human's turn. Picking up a piece then
+  // colors its target squares, and hovering a square during a drag shows the verdict + reason before the drop.
+  // Computed on this device only and never sent to an online opponent (same rule as hints).
+  var LV_LABEL = { best: 'Best move ✓', good: 'Good 👍', inaccuracy: 'Inaccuracy', mistake: 'Mistake', blunder: 'Blunder' };
+  var LV_CLASSES = ['lv-best', 'lv-good', 'lv-inaccuracy', 'lv-mistake', 'lv-blunder', 'lv-hover', 'lv-top', 'lv-wait'];
+  function liveOn() { return S.liveCoach && canInteract() && !S.st.over; }
+  function liveKey() { return S.history.length + ':' + S.history.map(function (h) { return h.m; }).join(','); }
+  function startLive() {
+    if (!liveOn()) return;
+    var key = liveKey();
+    if (S.live && S.live.key === key) return;
+    livePool.cancelAll();
+    var L = S.live = { key: key, ready: false, depth: 0, byTo: {}, t0: Date.now(), ms: 0 };
+    livePool.post({ kind: 'live', moves: movesUpTo(S.history.length), time: 900 }, function (r) {
+      if (S.live !== L || !r.moves) return;
+      // one verdict per (from,to): promotions keep the best-scoring piece
+      var by = {};
+      r.moves.forEach(function (x) {
+        var k = E.fromOf(x[0]) * 128 + E.toOf(x[0]);
+        if (!by[k] || x[3] > by[k].score) by[k] = { m: x[0], v: x[1], why: x[2], score: x[3] };
+      });
+      L.byTo = by; L.ready = true; L.depth = r.depth; L.best = r.best; L.final = !!r.final; L.ms = Date.now() - L.t0;
+      applyLive();
+      if (drag && drag.active) liveHover(drag.s, drag.hover || 0, true);
+    });
+  }
+  function liveFor(from, to) { var L = S.live; return L && L.ready && L.key === liveKey() ? L.byTo[from * 128 + to] || null : null; }
+  function clearLiveClasses() {
+    for (var k in sqEls) { var el = sqEls[k]; LV_CLASSES.forEach(function (c) { el.classList.remove(c); }); }
+  }
+  function liveReady() { var L = S.live; return !!(L && L.ready && L.key === liveKey()); }
+  // Color the held piece's target squares (tap-selected or being dragged).
+  function applyLive() {
+    clearLiveClasses();
+    var from = S.selected, tip = $('liveTip');
+    hideLiveLine();
+    if (!from || !liveOn()) { if (!drag) hideLiveTip(); return; }
+    var targets = targetsFrom(from), bestTo = 0, bestSc = -Infinity, seen = {};
+    targets.forEach(function (m) {
+      var to = E.toOf(m); if (seen[to]) return; seen[to] = 1;
+      var x = liveFor(from, to), el = sqEls[to];
+      if (!x) { el.classList.add('lv-wait'); return; }
+      el.classList.add('lv-' + x.v);
+      if (x.score > bestSc) { bestSc = x.score; bestTo = to; }
+    });
+    if (bestTo) sqEls[bestTo].classList.add('lv-top');
+    if (drag && drag.active) { if (drag.hover) sqEls[drag.hover] && sqEls[drag.hover].classList.add('lv-hover'); return; }
+    // tap-select summary
+    var pc = PIECE_NAME[Math.abs(S.pos.b[from])];
+    hideLiveTip();
+    if (!liveReady()) showLiveLine('wait', '🎯 Live coach: thinking…', '');
+    else if (bestTo) {
+      var bx = liveFor(from, bestTo), san = S.pos.san(bx.m, S.legal);
+      showLiveLine(bx.v, '🎯 Best with this ' + pc + ': ' + san + (bx.v === 'best' ? ' ✓' : ' (' + LV_LABEL[bx.v].toLowerCase() + ')'),
+        bx.v === 'best' ? 'Green = best/good · yellow = inaccuracy · red = mistake. Drag to see why.' : 'Another piece has a better move — ' + (S.pos.san(S.live.best, S.legal)) + '.');
+    }
+  }
+  function liveHover(from, to, force) {
+    if (!from) { clearLiveClasses(); hideLiveTip(); if (S.selected && !drag) applyLive(); return; }
+    if (!liveOn()) return;
+    if (force || true) applyLive();
+    if (!to || to === from) { showLiveTip(liveReady() ? 'idle' : 'wait', liveReady() ? '🎯 Move over a square to see if it is a good move' : '🎯 Live coach: thinking…', ''); return; }
+    var legal = targetsFrom(from).some(function (m) { return E.toOf(m) === to; });
+    if (!legal) { showLiveTip('idle', "🚫 That piece can't go to " + E.sqName(to), ''); return; }
+    sqEls[to].classList.add('lv-hover');
+    var x = liveFor(from, to);
+    if (!x) { showLiveTip('wait', '🎯 ' + S.pos.san(targetsFrom(from).filter(function (m) { return E.toOf(m) === to; })[0], S.legal) + ': thinking…', ''); return; }
+    var san = S.pos.san(x.m, S.legal), why = x.why ? x.why.charAt(0).toUpperCase() + x.why.slice(1) : '';
+    var head = x.v === 'best' || x.v === 'good' ? LV_LABEL[x.v] + ' — ' + san : LV_LABEL[x.v] + ': ' + san;
+    showLiveTip(x.v, head, why, to);
+  }
+  function showLiveTip(v, head, sub, nearSq) {
+    var tip = $('liveTip');
+    tip.className = 'livetip lt-' + v;
+    tip.innerHTML = '<b>' + esc(head) + '</b>' + (sub ? '<span>' + esc(sub) + '</span>' : '');
+    // keep the label away from the finger: top of the board unless the finger is in the top part
+    var top = true;
+    if (nearSq) { var r = sqRect(nearSq), fr = boardEl.getBoundingClientRect(); top = (r.top - fr.top) > fr.height * 0.32; }
+    tip.classList.toggle('bottom', !top);
+    tip.hidden = false;
+  }
+  function showLiveLine(v, head, sub) {
+    var el = $('liveLine');
+    el.className = 'liveline lt-' + v;
+    el.innerHTML = '<b>' + esc(head) + '</b>' + (sub ? ' <span>' + esc(sub) + '</span>' : '');
+    el.hidden = false;
+  }
+  function hideLiveLine() { var el = $('liveLine'); if (el) el.hidden = true; }
+  function hideLiveTip() { var tip = $('liveTip'); if (tip) tip.hidden = true; }
 
   // ---------- Input: click-to-move + drag ----------
   var drag = null, ghost = null;
@@ -2461,11 +2694,14 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
       var src = sqEls[drag.s].querySelector('img.pc'); if (src) src.classList.add('lift');
     }
     ghost.style.left = e.clientX + 'px'; ghost.style.top = e.clientY + 'px';
+    var hs = squareAt(e.clientX, e.clientY);
+    if (hs !== drag.hover) { drag.hover = hs; liveHover(drag.s, hs); }
   });
   function endDrag(e, cancelled) {
     if (!drag || e.pointerId !== drag.id) return;
     var d = drag; drag = null;
     if (ghost) { ghost.remove(); ghost = null; }
+    liveHover(0, 0);
     if (d.active) {
       var t = cancelled ? 0 : squareAt(e.clientX, e.clientY);
       if (t && t !== d.s && tryMove(d.s, t, true)) return;
@@ -2527,6 +2763,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
   });
   $('optEval').addEventListener('change', function (e) { S.evalBar = e.target.checked; save(); if (S.evalBar && !S.evalKnown) requestEval(); render(); });
   $('optExplain').addEventListener('change', function (e) { S.explain = e.target.checked; save(); render(); });
+  $('optLive').addEventListener('change', function (e) { S.liveCoach = e.target.checked; if (!S.liveCoach) { livePool.cancelAll(); S.live = null; } save(); render(); });
   $('optLegal').addEventListener('change', function (e) { S.showLegal = e.target.checked; save(); render(); });
   $('optFlip').addEventListener('change', function (e) {
     S.autoFlip = e.target.checked;
@@ -2759,7 +2996,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         mode: S.mode, human: S.human, level: S.level, showLegal: S.showLegal, autoFlip: S.autoFlip, sound: S.sound,
-        coach: S.coach, coachWho: S.coachWho, evalBar: S.evalBar, explain: S.explain,
+        coach: S.coach, coachWho: S.coachWho, evalBar: S.evalBar, explain: S.explain, liveCoach: S.liveCoach,
         online: O.role ? { role: O.role, code: O.code, myColor: O.myColor } : null,
         moves: S.history.map(function (h) { return E.uci(h.m); })
       }));
@@ -2773,7 +3010,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     if (d.human === 1 || d.human === -1) S.human = d.human;
     if (LEVEL_NAME[d.level]) S.level = d.level;
     S.showLegal = d.showLegal !== false; S.autoFlip = !!d.autoFlip; S.sound = d.sound !== false;
-    S.coach = d.coach !== false; S.coachWho = d.coachWho === 'both' ? 'both' : 'me'; S.evalBar = d.evalBar !== false; S.explain = d.explain !== false;
+    S.coach = d.coach !== false; S.coachWho = d.coachWho === 'both' ? 'both' : 'me'; S.evalBar = d.evalBar !== false; S.explain = d.explain !== false; S.liveCoach = d.liveCoach !== false;
     var pos = new E.Position(), ms = [];
     for (var i = 0; i < (d.moves || []).length; i++) { var m = pos.parseUci(d.moves[i]); if (!m) break; ms.push(m); pos.make(m); }
     resetGame(ms);
