@@ -264,6 +264,21 @@ button, .seg button, .toggle, .btn { touch-action: manipulation; -webkit-user-se
 .liveline.lt-best, .liveline.lt-good { border-left-color: #22a04f; } .liveline.lt-inaccuracy { border-left-color: #d9a400; }
 .liveline.lt-mistake { border-left-color: #e8741e; } .liveline.lt-blunder { border-left-color: #d42a2a; }
 
+/* Master "Live coaching" switch under the board (iOS-style) */
+.coachbar { display: flex; align-items: center; gap: 10px; background: #fff; border-radius: 14px; padding: 8px 12px; min-height: 48px; box-shadow: 0 2px 8px rgba(90,55,20,.08); cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; border: 2px solid var(--good); }
+.coachbar.off { border-color: #dccfc0; background: rgba(255,255,255,.7); }
+.coachbar .cb-label { font-weight: 800; font-size: 16px; flex: 1; }
+.coachbar .cb-state { font-weight: 800; font-size: 14px; color: var(--good); min-width: 28px; text-align: right; }
+.coachbar.off .cb-state { color: var(--muted); }
+.coachbar input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.coachbar .sw { width: 51px; height: 31px; border-radius: 16px; background: #dccfc0; position: relative; transition: background .2s; flex: none; }
+.coachbar .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,.25); transition: left .2s; }
+.coachbar input:checked + .sw { background: #34c759; }
+.coachbar input:checked + .sw::after { left: 22px; }
+.coachbar input:focus-visible + .sw { outline: 3px solid rgba(40,120,230,.6); outline-offset: 2px; }
+body.coaching-off .livetip, body.coaching-off .liveline { display: none !important; }
+@media (max-width: 520px) { .coachbar { padding: 6px 10px; min-height: 44px; } .coachbar .cb-label { font-size: 15px; } }
+
 </style>
 </head>
 <body>
@@ -300,6 +315,12 @@ button, .seg button, .toggle, .btn { touch-action: manipulation; -webkit-user-se
       </div>
     </div>
     <div class="player" id="pBottom"><span class="avatar"></span><span class="name"></span><span class="caps"></span><span class="clock-dot"></span></div>
+    <label class="coachbar" id="coachBar" for="optCoaching">
+      <span class="cb-label">🎯 Live coaching</span>
+      <span class="cb-state" id="coachingState">On</span>
+      <input type="checkbox" id="optCoaching" role="switch" aria-label="Live coaching" checked>
+      <span class="sw" aria-hidden="true"></span>
+    </label>
   </div>
 
   <div class="panel">
@@ -1896,6 +1917,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     mode: 'computer', human: 1, level: 'easy',
     showLegal: true, autoFlip: false, sound: true,
     coach: true, coachWho: 'me', evalBar: true, explain: true, liveCoach: true, live: null,
+    coaching: true,       // master 'Live coaching' switch under the board (this device only; never sent online)
     flipped: false,
     pos: new E.Position(),
     history: [],          // {m, san, cap, review, pending}
@@ -2123,13 +2145,13 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
 
   // Hints (and their explanations) are computed on this device only and never sent to an online opponent.
   function hint() {
-    if (!canInteract() || S.hinting) return;
+    if (!S.coaching || !canInteract() || S.hinting) return;
     S.hinting = true; S.hint = null; render();
     var n = S.history.length;
     var done = function (d) {
       S.hinting = false;
       if (S.history.length !== n) { render(); return; }
-      if (d.move && S.legal.indexOf(d.move) >= 0) {
+      if (S.coaching && d.move && S.legal.indexOf(d.move) >= 0) {
         S.hint = { from: E.fromOf(d.move), to: E.toOf(d.move), m: d.move, ex: S.explain ? d.ex || null : null, alt: S.explain ? d.alt || null : null, showAlt: false, why: null, whyBusy: false };
         S.selected = E.fromOf(d.move);
       }
@@ -2150,7 +2172,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     });
   }
   // The coach's best-move suggestion (the hint), with why it is best and how it beats the next-best move.
-  function hintVisible() { return !!(S.hint && S.hint.ex && S.explain); }
+  function hintVisible() { return !!(S.coaching && S.hint && S.hint.ex && S.explain); }
   function renderHintExplain() {
     var box = $('hintExplain'), h = S.hint;
     if (!hintVisible()) { box.hidden = true; box.innerHTML = ''; return; }
@@ -2248,8 +2270,8 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
   }
   function renderCoach() {
     var card = $('coachCard');
-    card.hidden = !S.coach && !hintVisible();
-    if (!S.coach) { $('coachFor').textContent = ''; $('coachAsk').innerHTML = ''; $('coachReview').innerHTML = ''; $('coachTips').innerHTML = ''; $('coachSummary').innerHTML = ''; return; }
+    card.hidden = !S.coaching || (!S.coach && !hintVisible());
+    if (!S.coaching || !S.coach) { $('coachFor').textContent = ''; $('coachAsk').innerHTML = ''; $('coachReview').innerHTML = ''; $('coachTips').innerHTML = ''; $('coachSummary').innerHTML = ''; return; }
     renderCoachAsk();
     $('coachFor').textContent = S.coachWho === 'both' ? 'coaching both sides' : (S.mode === 'two' ? 'coaching ' + COLOR_NAME[mySide()] : 'coaching you');
     // review of the latest coached move
@@ -2305,7 +2327,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     });
     return h;
   }
-  function fillOverSummary() { $('overSummary').innerHTML = S.coach ? summaryHtml() : ''; }
+  function fillOverSummary() { $('overSummary').innerHTML = S.coach && S.coaching ? summaryHtml() : ''; }
 
   function evalText(cp) {
     if (Math.abs(cp) > E.MATE - 1000) {
@@ -2351,9 +2373,9 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
   }
   function renderArrows() {
     var h = '';
-    if (S.arrow && S.coach) h += arrowSvg(S.arrow.from, S.arrow.to, 'rgba(34,160,70,.82)');
+    if (S.arrow && S.coach && S.coaching) h += arrowSvg(S.arrow.from, S.arrow.to, 'rgba(34,160,70,.82)');
     if (S.hint && S.hint.showAlt && S.hint.alt && S.hint.alt.move && hintVisible()) h += arrowSvg(E.fromOf(S.hint.alt.move), E.toOf(S.hint.alt.move), 'rgba(120,120,130,.6)');
-    if (S.hint) h += arrowSvg(S.hint.from, S.hint.to, 'rgba(40,120,230,.8)');
+    if (S.hint && S.coaching) h += arrowSvg(S.hint.from, S.hint.to, 'rgba(40,120,230,.8)');
     $('arrows').innerHTML = h;
   }
 
@@ -2443,7 +2465,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
       if (last && (s === E.fromOf(last) || s === E.toOf(last))) cls += ' last';
       if (s === S.selected) cls += ' sel';
       if (S.hint && (s === S.hint.from || s === S.hint.to)) cls += ' hint';
-      else if (S.hint && S.hint.ex && S.explain && S.hint.ex.targets.indexOf(s) >= 0) cls += ' target';
+      else if (S.coaching && S.hint && S.hint.ex && S.explain && S.hint.ex.targets.indexOf(s) >= 0) cls += ' target';
       if (s === checkSq) cls += ' check';
       el.className = cls;
       var html = '';
@@ -2516,8 +2538,8 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
       else subTxt = 'Tap a piece, then tap where it should go (or drag it).';
       if (st.check) subTxt = 'Your king is under attack — protect it!';
     }
-    if (S.hinting) subTxt = '💡 Thinking of a good move…';
-    else if (S.hint) {
+    if (S.hinting && S.coaching) subTxt = '💡 Thinking of a good move…';
+    else if (S.hint && S.coaching) {
       var p = S.pos.b[S.hint.from];
       if (hintVisible()) subTxt = '💡 Best move: ' + S.pos.san(S.hint.m, S.legal) + ' (blue arrow) — the Coach explains why ⬇️';
       else subTxt = '💡 Hint: move your ' + PIECE_NAME[Math.abs(p)] + ' from ' + E.sqName(S.hint.from) + ' to ' + E.sqName(S.hint.to) + ' (' + S.pos.san(S.hint.m, S.legal) + ') — blue arrow' +
@@ -2539,7 +2561,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
   }
   function mvCell(i) {
     var h = S.history[i]; if (!h) return '<div class="mv"></div>';
-    var badge = h.review && h.review.verdict !== 'best' && h.review.verdict !== 'good' ? ' ' + CO.VERDICTS[h.review.verdict].emoji : '';
+    var badge = S.coaching && h.review && h.review.verdict !== 'best' && h.review.verdict !== 'good' ? ' ' + CO.VERDICTS[h.review.verdict].emoji : '';
     return '<div class="mv' + (i === S.history.length - 1 ? ' cur' : '') + '">' + h.san + badge + '</div>';
   }
   function setSeg(id, val) {
@@ -2556,6 +2578,9 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     $('segCoachWho').style.display = S.coach ? '' : 'none';
     $('optLegal').checked = S.showLegal; $('optFlip').checked = S.autoFlip; $('optSound').checked = S.sound;
     $('optCoach').checked = S.coach; $('optEval').checked = S.evalBar; $('optExplain').checked = S.explain; $('optLive').checked = S.liveCoach;
+    $('optCoaching').checked = S.coaching; $('coachingState').textContent = S.coaching ? 'On' : 'Off';
+    $('coachBar').classList.toggle('off', !S.coaching); document.body.classList.toggle('coaching-off', !S.coaching);
+    $('btnHint').style.display = S.coaching ? '' : 'none';
     $('btnUndo').disabled = !S.history.length || !!S.promo || (S.mode === 'online' && (!O.connected || O.undoWait || !onlineUndoTarget()));
     $('btnUndo').textContent = S.mode === 'online' ? '↩️ Ask to undo' : '↩️ Undo';
     $('btnHint').disabled = !canInteract() || S.hinting;
@@ -2574,7 +2599,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
   // Computed on this device only and never sent to an online opponent (same rule as hints).
   var LV_LABEL = { best: 'Best move ✓', good: 'Good 👍', inaccuracy: 'Inaccuracy', mistake: 'Mistake', blunder: 'Blunder' };
   var LV_CLASSES = ['lv-best', 'lv-good', 'lv-inaccuracy', 'lv-mistake', 'lv-blunder', 'lv-hover', 'lv-top', 'lv-wait'];
-  function liveOn() { return S.liveCoach && canInteract() && !S.st.over; }
+  function liveOn() { return S.coaching && S.liveCoach && canInteract() && !S.st.over; }
   function liveKey() { return S.history.length + ':' + S.history.map(function (h) { return h.m; }).join(','); }
   function startLive() {
     if (!liveOn()) return;
@@ -2764,6 +2789,15 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
   $('optEval').addEventListener('change', function (e) { S.evalBar = e.target.checked; save(); if (S.evalBar && !S.evalKnown) requestEval(); render(); });
   $('optExplain').addEventListener('change', function (e) { S.explain = e.target.checked; save(); render(); });
   $('optLive').addEventListener('change', function (e) { S.liveCoach = e.target.checked; if (!S.liveCoach) { livePool.cancelAll(); S.live = null; } save(); render(); });
+  // Master 'Live coaching' switch: hides drag grading colors + reasons, the coach card, hints and coach arrows on THIS device.
+  function setCoaching(on) {
+    S.coaching = !!on;
+    if (!S.coaching) { livePool.cancelAll(); S.live = null; S.hint = null; S.hinting = false; clearLiveClasses(); hideLiveTip(); hideLiveLine(); }
+    else { tipCache = null; if (S.coach) fillMissingReviews(1); }
+    save(); render();
+    if (S.st && S.st.over && !$('overOverlay').hidden) fillOverSummary();
+  }
+  $('optCoaching').addEventListener('change', function (e) { setCoaching(e.target.checked); });
   $('optLegal').addEventListener('change', function (e) { S.showLegal = e.target.checked; save(); render(); });
   $('optFlip').addEventListener('change', function (e) {
     S.autoFlip = e.target.checked;
@@ -2996,7 +3030,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         mode: S.mode, human: S.human, level: S.level, showLegal: S.showLegal, autoFlip: S.autoFlip, sound: S.sound,
-        coach: S.coach, coachWho: S.coachWho, evalBar: S.evalBar, explain: S.explain, liveCoach: S.liveCoach,
+        coach: S.coach, coachWho: S.coachWho, evalBar: S.evalBar, explain: S.explain, liveCoach: S.liveCoach, liveCoaching: S.coaching,
         online: O.role ? { role: O.role, code: O.code, myColor: O.myColor } : null,
         moves: S.history.map(function (h) { return E.uci(h.m); })
       }));
@@ -3010,7 +3044,7 @@ var PIECE_IMG = {"wK":"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5
     if (d.human === 1 || d.human === -1) S.human = d.human;
     if (LEVEL_NAME[d.level]) S.level = d.level;
     S.showLegal = d.showLegal !== false; S.autoFlip = !!d.autoFlip; S.sound = d.sound !== false;
-    S.coach = d.coach !== false; S.coachWho = d.coachWho === 'both' ? 'both' : 'me'; S.evalBar = d.evalBar !== false; S.explain = d.explain !== false; S.liveCoach = d.liveCoach !== false;
+    S.coach = d.coach !== false; S.coachWho = d.coachWho === 'both' ? 'both' : 'me'; S.evalBar = d.evalBar !== false; S.explain = d.explain !== false; S.liveCoach = d.liveCoach !== false; S.coaching = d.liveCoaching !== false;
     var pos = new E.Position(), ms = [];
     for (var i = 0; i < (d.moves || []).length; i++) { var m = pos.parseUci(d.moves[i]); if (!m) break; ms.push(m); pos.make(m); }
     resetGame(ms);
